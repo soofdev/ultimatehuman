@@ -105,6 +105,8 @@ export const ConfigSchema = z
       .object({
         schedule: z.string().default("0 7 * * *").describe("Cron expression, local time"),
         lookbackHours: z.number().int().min(1).max(24 * 14).default(24),
+        firstPassLookbackHours: z.number().int().min(1).max(24 * 14).default(168)
+          .describe("The onboarding pass looks further back so a new install has enough data to judge on day one"),
         minUsersAffected: z.number().int().min(1).default(2)
           .describe("Precision floor: a finding must touch at least this many users"),
         maxFindingsPerRun: z.number().int().min(1).max(20).default(5),

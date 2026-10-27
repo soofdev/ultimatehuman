@@ -1,24 +1,61 @@
-import type { ApiRoutes } from "@ultimatehuman/sdk";
+/** Fetch against the engine. Session is an HttpOnly cookie; the CSRF header comes from /api/status. No tokens in JS storage. */
+let csrf = "";
+export function setCsrf(v: string) {
+  csrf = v;
+}
 
-type Route = keyof ApiRoutes;
-type Res<R extends Route> = ApiRoutes[R] extends { res: infer T } ? T : never;
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
-/** Typed fetch against the engine. Session is an HttpOnly cookie; no tokens in JS. */
-export async function api<R extends Route>(route: R, body?: unknown, params: Record<string, string> = {}): Promise<Res<R>> {
-  const [method, rawPath] = route.split(" ") as [string, string];
-  const path = rawPath.replace(/:(\w+)/g, (_, k: string) => encodeURIComponent(params[k] ?? ""));
-  const init: RequestInit = { method, credentials: "same-origin", headers: { "content-type": "application/json" } };
-  if (body !== undefined) init.body = JSON.stringify(body);
-  const res = await fetch(path, init);
-  if (!res.ok) throw new Error(`${route} -> ${res.status}`);
-  return (await res.json()) as Res<R>;
+export async function get<T = any>(path: string): Promise<T> {
+  const r = await fetch(path, { credentials: "same-origin" });
+  if (!r.ok) throw new ApiError(r.status, (await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function post<T = any>(path: string, body: unknown = {}): Promise<T> {
+  const r = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json", "x-uh-csrf": csrf },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new ApiError(r.status, (await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  return r.json();
 }
 
 /** Redeem the single-use code from the URL fragment, then wipe it from history. */
-export async function redeemLoginFragment(): Promise<boolean> {
+export async function redeemLoginFragment(): Promise<"ok" | "none" | string> {
   const code = new URLSearchParams(location.hash.slice(1)).get("code");
-  if (!code) return false;
-  history.replaceState(null, "", location.pathname);
-  await api("POST /api/auth/redeem", { code });
-  return true;
+  if (!code) return "none";
+  history.replaceState(null, "", "/login");
+  try {
+    await post("/api/auth/redeem", { code });
+    return "ok";
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+export function connectEvents(onEvent: (ev: any) => void): () => void {
+  let ws: WebSocket | null = null;
+  let closed = false;
+  const open = () => {
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/events`);
+    ws.onmessage = (m) => onEvent(JSON.parse(m.data));
+    ws.onclose = () => {
+      if (!closed) setTimeout(open, 1500);
+    };
+  };
+  open();
+  return () => {
+    closed = true;
+    ws?.close();
+  };
 }

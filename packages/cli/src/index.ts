@@ -1,9 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --disable-warning=ExperimentalWarning
 import { parseArgs } from "node:util";
 import { init } from "./commands/init";
 import { start } from "./commands/start";
 import { doctor } from "./commands/doctor";
 import { configCmd } from "./commands/config";
+import { dashboard } from "./commands/dashboard";
 
 const USAGE = `ultimatehuman <command>
 
@@ -12,6 +13,7 @@ const USAGE = `ultimatehuman <command>
   doctor      Check config, credentials, scopes and service; --fix repairs
   config      get <path> | set <path> <value> | schema
   dashboard   Print a single-use dashboard login link
+  stop        Stop the engine started by init
   service     install | uninstall | status (systemd user unit / launchd agent)
 
 Every interactive step has a flag; pass --non-interactive to fail instead of prompting.`;
@@ -40,6 +42,21 @@ async function main(argv: string[]): Promise<number> {
     case "config":
       return configCmd(positionals);
     case "dashboard":
+      return dashboard();
+    case "stop": {
+      const { readFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { uhHome } = await import("@ultimatehuman/core");
+      try {
+        const pid = Number(readFileSync(join(uhHome(), "engine.pid"), "utf8"));
+        process.kill(pid, "SIGTERM");
+        console.log(`engine (pid ${pid}) stopped`);
+        return 0;
+      } catch {
+        console.log("engine is not running");
+        return 1;
+      }
+    }
     case "service":
       console.log(`${command} is a stub in this skeleton.`);
       return 0;

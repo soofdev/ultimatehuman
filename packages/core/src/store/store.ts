@@ -1,15 +1,118 @@
-import type { Finding, RunSummary } from "@ultimatehuman/sdk";
+import { DatabaseSync } from "node:sqlite";
+import { chmodSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import type { Finding } from "@ultimatehuman/sdk";
+import type { RunRecord } from "../radar/types";
 
-/** Persistence port. v1 target: a single SQLite file next to the config, schema created by the engine at startup. */
-export interface Store {
-  saveRun(run: RunSummary): Promise<void>;
-  getRun(id: string): Promise<RunSummary | undefined>;
-  listRuns(limit: number): Promise<RunSummary[]>;
-  saveFinding(f: Finding): Promise<void>;
-  listFindings(filter?: { status?: Finding["status"] }): Promise<Finding[]>;
-  findByFingerprint(fp: string): Promise<Finding | undefined>;
-  /** Checkpoints let a parked run resume where it stopped. */
-  saveCheckpoint(runId: string, data: unknown): Promise<void>;
-  loadCheckpoint(runId: string): Promise<unknown>;
-  recordUsage(entry: { at: string; sourceId: string; runId: string; usd?: number; windowPct?: number }): Promise<void>;
+/**
+ * SQLite store (node:sqlite). The schema is created and migrated by the engine
+ * at startup; there are no manual steps and no external database.
+ */
+const MIGRATIONS: string[] = [
+  `CREATE TABLE runs (
+     id TEXT PRIMARY KEY, trigger TEXT NOT NULL, phase TEXT NOT NULL,
+     started_at TEXT NOT NULL, finished_at TEXT, json TEXT NOT NULL);
+   CREATE TABLE findings (
+     id TEXT PRIMARY KEY, run_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+     status TEXT NOT NULL, created_at TEXT NOT NULL, json TEXT NOT NULL);
+   CREATE INDEX findings_fp ON findings(fingerprint);
+   CREATE TABLE dismiss_rules (fingerprint TEXT PRIMARY KEY, reason TEXT NOT NULL, at TEXT NOT NULL);
+   CREATE TABLE usage (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, source_id TEXT NOT NULL,
+     kind TEXT NOT NULL, run_id TEXT, json TEXT NOT NULL);
+   CREATE TABLE kv (key TEXT PRIMARY KEY, json TEXT NOT NULL);`,
+];
+
+export class Store {
+  readonly db: DatabaseSync;
+
+  constructor(home: string) {
+    const path = join(home, "state.db");
+    const fresh = !existsSync(path);
+    this.db = new DatabaseSync(path);
+    if (fresh) chmodSync(path, 0o600);
+    this.db.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+    const row = this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as { value: string } | undefined;
+    let version = row ? Number(row.value) : 0;
+    while (version < MIGRATIONS.length) {
+      this.db.exec(MIGRATIONS[version]!);
+      version++;
+      this.db.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)").run(String(version));
+    }
+  }
+
+  schemaVersion(): number {
+    return MIGRATIONS.length;
+  }
+
+  saveRun(run: RunRecord): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO runs(id,trigger,phase,started_at,finished_at,json) VALUES(?,?,?,?,?,?)")
+      .run(run.id, run.trigger, run.phase, run.startedAt, run.finishedAt ?? null, JSON.stringify(run));
+  }
+
+  getRun(id: string): RunRecord | undefined {
+    const r = this.db.prepare("SELECT json FROM runs WHERE id=?").get(id) as { json: string } | undefined;
+    return r ? (JSON.parse(r.json) as RunRecord) : undefined;
+  }
+
+  listRuns(limit = 50): RunRecord[] {
+    return (this.db.prepare("SELECT json FROM runs ORDER BY started_at DESC LIMIT ?").all(limit) as { json: string }[]).map(
+      (r) => JSON.parse(r.json) as RunRecord,
+    );
+  }
+
+  saveFinding(f: Finding): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO findings(id,run_id,fingerprint,status,created_at,json) VALUES(?,?,?,?,?,?)")
+      .run(f.id, f.runId, f.dedupe.fingerprint, f.status, (f as Finding & { createdAt?: string }).createdAt ?? new Date().toISOString(), JSON.stringify(f));
+  }
+
+  getFinding(id: string): Finding | undefined {
+    const r = this.db.prepare("SELECT json FROM findings WHERE id=?").get(id) as { json: string } | undefined;
+    return r ? (JSON.parse(r.json) as Finding) : undefined;
+  }
+
+  listFindings(): Finding[] {
+    return (this.db.prepare("SELECT json FROM findings ORDER BY created_at DESC").all() as { json: string }[]).map(
+      (r) => JSON.parse(r.json) as Finding,
+    );
+  }
+
+  findingsByFingerprint(fp: string): Finding[] {
+    return (this.db.prepare("SELECT json FROM findings WHERE fingerprint=?").all(fp) as { json: string }[]).map(
+      (r) => JSON.parse(r.json) as Finding,
+    );
+  }
+
+  addDismissRule(fingerprint: string, reason: string): void {
+    this.db.prepare("INSERT OR REPLACE INTO dismiss_rules(fingerprint,reason,at) VALUES(?,?,?)").run(fingerprint, reason, new Date().toISOString());
+  }
+
+  dismissRule(fingerprint: string): { reason: string; at: string } | undefined {
+    return this.db.prepare("SELECT reason, at FROM dismiss_rules WHERE fingerprint=?").get(fingerprint) as
+      | { reason: string; at: string }
+      | undefined;
+  }
+
+  addUsage(sourceId: string, kind: string, runId: string | null, data: unknown): void {
+    this.db.prepare("INSERT INTO usage(at,source_id,kind,run_id,json) VALUES(?,?,?,?,?)").run(new Date().toISOString(), sourceId, kind, runId, JSON.stringify(data));
+  }
+
+  listUsage(kind: string, limit = 200): { at: string; sourceId: string; runId: string | null; data: any }[] {
+    return (this.db.prepare("SELECT at, source_id, run_id, json FROM usage WHERE kind=? ORDER BY id DESC LIMIT ?").all(kind, limit) as any[]).map((r) => ({
+      at: r.at,
+      sourceId: r.source_id,
+      runId: r.run_id,
+      data: JSON.parse(r.json),
+    }));
+  }
+
+  getKv<T>(key: string): T | undefined {
+    const r = this.db.prepare("SELECT json FROM kv WHERE key=?").get(key) as { json: string } | undefined;
+    return r ? (JSON.parse(r.json) as T) : undefined;
+  }
+
+  setKv(key: string, value: unknown): void {
+    this.db.prepare("INSERT OR REPLACE INTO kv(key,json) VALUES(?,?)").run(key, JSON.stringify(value));
+  }
 }

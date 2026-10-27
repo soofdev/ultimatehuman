@@ -1,29 +1,180 @@
-import type { Server } from "node:http";
+import { watch } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Plugin } from "@ultimatehuman/sdk";
 import type { Config } from "./config/schema";
-import { LoginLinks } from "./server/login-links";
-import { startServer } from "./server/http";
+import { configJsonSchema } from "./config/schema";
+import { loadConfig, loadRawConfig, defaultConfigPath, resolveSecretRefs, type SecretRefValue } from "./config/load";
+import { ensureHome, controlKey } from "./home";
+import { Store } from "./store/store";
+import { WindowTracker } from "./governor/tracker";
+import { Radar, publicRun } from "./radar/engine";
+import { renderIssue } from "./radar/issue";
+import { startServer, type RunningServer } from "./server/http";
 
 export interface DaemonHandle {
-  links: LoginLinks;
-  server: Server;
+  server: RunningServer;
+  radar: Radar;
   stop(): Promise<void>;
 }
 
+export interface DaemonOptions {
+  plugins: readonly Plugin[];
+  staticDir: string | null;
+  version: string;
+}
+
 /**
- * Daemon entry: start the local server, then (core-engine leg) the scheduler.
- * Parked runs are resumed by a timer armed at the recorded reset time and
- * re-armed from the store on every boot, so a reboot never loses a parked run.
+ * Daemon entry: config, store (schema created at startup), governor, radar,
+ * local HTTP + WS server. Parked runs are re-armed from the store on boot.
  */
-export async function startDaemon(config: Config, version: string): Promise<DaemonHandle> {
+export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
+  const home = ensureHome();
+  const configPath = defaultConfigPath();
+  let config: Config = await loadConfig(configPath);
   const loopback = ["127.0.0.1", "::1", "localhost"].includes(config.server.host);
-  if (!loopback && !config.server.allowRemote) {
-    throw new Error(`refusing to bind ${config.server.host}: set server.allowRemote or use an SSH tunnel`);
-  }
-  const links = new LoginLinks();
-  const server = await startServer({ host: config.server.host, port: config.server.port, version, links });
+  if (!loopback && !config.server.allowRemote) throw new Error(`refusing to bind ${config.server.host}: set server.allowRemote or use an SSH tunnel`);
+
+  const logFile = join(home, "logs", "daemon.log");
+  const log = (m: string) => appendFileSync(logFile, `${new Date().toISOString()} ${m}\n`);
+  const store = new Store(home);
+  const src = config.auth.sources[0]!;
+  const tracker = new WindowTracker(store, src.id, src.kind === "anthropic_api_key" ? "api_key" : "subscription", config.governor.humanReservePct);
+
+  const resolveCredentials = async (pluginId: string) => {
+    const inst = config.plugins[pluginId];
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(inst?.credentials ?? {})) out[k] = await resolveSecretRefs(v as SecretRefValue, configPath);
+    return out;
+  };
+  const runnerEnv = async (): Promise<Record<string, string>> => {
+    if (src.kind === "claude_oauth_token") return { CLAUDE_CODE_OAUTH_TOKEN: await resolveSecretRefs(src.token as SecretRefValue, configPath) };
+    if (src.kind === "anthropic_api_key") return { ANTHROPIC_API_KEY: await resolveSecretRefs(src.apiKey as SecretRefValue, configPath) };
+    return {};
+  };
+
+  let server: RunningServer | null = null;
+  const emit = (ev: unknown) => server?.broadcast(ev);
+  const radar = new Radar({
+    home,
+    store,
+    getConfig: () => config,
+    plugins: opts.plugins,
+    resolveCredentials,
+    runnerEnv,
+    tracker,
+    emit,
+    log,
+    ...(process.env.ULTIMATEHUMAN_MODEL ? { model: process.env.ULTIMATEHUMAN_MODEL } : {}),
+  });
+
+  const output = () => opts.plugins.find((p) => p.manifest.kind === "output" && config.plugins[p.manifest.id]);
+  const issueFor = (id: string) => {
+    const f = store.getFinding(id);
+    if (!f) return null;
+    const o = output();
+    const labels = ((o && (config.plugins[o.manifest.id]?.options?.labels as string[])) ?? ["ultimatehuman"]) as string[];
+    const repo = o ? String(config.plugins[o.manifest.id]?.credentials?.repo ?? "") : "";
+    return { f, issue: renderIssue(f, labels), repo, dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true };
+  };
+
+  server = await startServer({
+    host: config.server.host,
+    port: config.server.port,
+    staticDir: opts.staticDir,
+    logDir: join(home, "logs"),
+    controlKey: controlKey(),
+    routes: {
+      "GET /api/status": async () => ({
+        json: {
+          version: opts.version,
+          window: tracker.status(),
+          lastRun: radar.current() ? publicRun(radar.current()!) : store.listRuns(1)[0] ?? null,
+          plugins: opts.plugins.map((p) => ({ id: p.manifest.id, displayName: p.manifest.displayName, kind: p.manifest.kind, configured: !!config.plugins[p.manifest.id] })),
+          counts: { new: store.listFindings().filter((f) => f.status === "new").length },
+        },
+      }),
+      "GET /api/onboarding": async () => ({ json: store.getKv("onboarding") ?? null }),
+      "POST /api/onboarding": async (_req, body) => {
+        store.setKv("onboarding", body);
+        emit({ type: "onboarding.updated", onboarding: body });
+        return { json: { ok: true } };
+      },
+      "GET /api/runs": async () => ({ json: { runs: store.listRuns(30) } }),
+      "GET /api/runs/:id": async (_r, _b, p) => {
+        const run = radar.current()?.id === p.id ? publicRun(radar.current()!) : store.getRun(p.id!);
+        return run ? { json: { run } } : { status: 404, json: { error: "no such run" } };
+      },
+      "POST /api/runs": async (_r, body) => {
+        const run = radar.trigger(body.trigger === "onboarding" ? "onboarding" : "run_now", body.lookbackHours ? Number(body.lookbackHours) : undefined);
+        return { json: { run: publicRun(run) } };
+      },
+      "GET /api/findings": async () => ({ json: { findings: store.listFindings() } }),
+      "GET /api/findings/:id": async (_r, _b, p) => {
+        const x = issueFor(p.id!);
+        return x ? { json: { finding: x.f, issuePreview: x.issue, repo: x.repo, dryRun: x.dryRun } } : { status: 404, json: { error: "no such finding" } };
+      },
+      "POST /api/findings/:id/file": async (_r, _b, p) => {
+        const x = issueFor(p.id!);
+        if (!x) return { status: 404, json: { error: "no such finding" } };
+        const o = output()!;
+        const ctx = { credentials: await resolveCredentials(o.manifest.id).catch(() => ({ repo: x.repo })), options: config.plugins[o.manifest.id]?.options ?? {}, http: null as any, log: () => {}, signal: new AbortController().signal };
+        const filed = await (o as any).output.file(ctx, x.f);
+        const rec = { at: new Date().toISOString(), repo: x.repo, ref: filed.ref, title: x.issue.title };
+        (x.f as any).dryRunPreview = rec;
+        store.saveFinding(x.f);
+        log(`dry run: would create issue in ${x.repo}: ${x.issue.title}`);
+        emit({ type: "finding.updated", finding: x.f });
+        return { json: { dryRun: true, message: `dry run - would create issue in ${x.repo}`, issue: x.issue, repo: x.repo } };
+      },
+      "POST /api/findings/:id/dismiss": async (_r, body, p) => {
+        const f = store.getFinding(p.id!);
+        const reason = String(body.reason ?? "").trim();
+        if (!f) return { status: 404, json: { error: "no such finding" } };
+        if (!reason) return { status: 400, json: { error: "a one-line reason is required" } };
+        f.status = "dismissed";
+        (f as any).dismissReason = reason;
+        store.saveFinding(f);
+        store.addDismissRule(f.dedupe.fingerprint, reason);
+        emit({ type: "finding.updated", finding: f });
+        return { json: { ok: true } };
+      },
+      "GET /api/usage": async () => ({
+        json: {
+          window: tracker.status(),
+          readings: store.listUsage("rate_limit", 300).map((u) => ({ at: u.at, ...u.data })),
+          steps: store.listUsage("step", 300).map((u) => ({ at: u.at, runId: u.runId, ...u.data })),
+        },
+      }),
+      "GET /api/config": async () => ({ json: { path: configPath, raw: await loadRawConfig(configPath), config, schema: configJsonSchema() } }),
+    },
+  });
+
+  radar.rearm();
+  // Hot reload: a hand edit is validated; an invalid file keeps the last good config and logs why.
+  watch(configPath, async () => {
+    try {
+      config = await loadConfig(configPath);
+      log("config reloaded");
+    } catch (e) {
+      log(`config invalid, keeping the last good one: ${(e as Error).message}`);
+    }
+  });
+  // Minimal daily cron ("M H * * *").
+  const cron = /^(\d+)\s+(\d+)\s+\*\s+\*\s+\*$/.exec(config.radar.schedule);
+  const tick = setInterval(() => {
+    const d = new Date();
+    if (cron && d.getMinutes() === Number(cron[1]) && d.getHours() === Number(cron[2]) && d.getSeconds() < 30) radar.trigger("schedule");
+  }, 30_000);
+  writeFileSync(join(home, "engine.pid"), String(process.pid));
+  log(`daemon up on ${config.server.host}:${config.server.port} (pid ${process.pid})`);
+
   return {
-    links,
     server,
-    stop: () => new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))),
+    radar,
+    stop: async () => {
+      clearInterval(tick);
+      await new Promise<void>((r) => server!.server.close(() => r()));
+    },
   };
 }
