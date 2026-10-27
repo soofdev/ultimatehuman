@@ -55,12 +55,33 @@ export async function spin<T>(label: string, msg: string, fn: () => Promise<T>):
   }
 }
 
+// One line queue for the whole command. readline emits every buffered line at
+// once, so answers piped or typed ahead (an agent, `printf '2\n\n' | init`)
+// are queued here instead of being dropped between two questions.
+let rl: import("node:readline").Interface | null = null;
+const lines: string[] = [];
+let waiting: ((l: string | null) => void) | null = null;
+let closed = false;
 export async function ask(question: string, def?: string): Promise<string> {
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const a = await rl.question(`  ${c.accent("?")} ${c.bold(question)}${def ? c.muted(` (${def})`) : ""} `);
-  rl.close();
-  return a.trim() || def || "";
+  if (!rl) {
+    const { createInterface } = await import("node:readline");
+    rl = createInterface({ input: process.stdin, terminal: false });
+    rl.on("line", (l) => (waiting ? (waiting(l), (waiting = null)) : lines.push(l)));
+    rl.on("close", () => {
+      closed = true;
+      waiting?.(null);
+      waiting = null;
+    });
+  }
+  process.stdout.write(`  ${c.accent("?")} ${c.bold(question)}${def ? c.muted(` (${def})`) : ""} `);
+  const a = lines.length ? lines.shift()! : closed ? null : await new Promise<string | null>((r) => (waiting = r));
+  if (!process.stdin.isTTY || a === null) process.stdout.write(`${a ?? ""}\n`);
+  return a?.trim() || def || "";
+}
+
+export function closePrompts(): void {
+  rl?.close();
+  rl = null;
 }
 
 export async function choose(question: string, options: string[], def = 0): Promise<number> {

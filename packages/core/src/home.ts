@@ -1,7 +1,7 @@
 import { mkdirSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 
 /** Data dir: ~/.ultimatehuman (0700). ULTIMATEHUMAN_HOME overrides it. */
 export function uhHome(): string {
@@ -26,4 +26,9 @@ export function controlKey(): string {
   const p = join(ensureHome(), "control.key");
   if (!existsSync(p)) writeFileSync(p, randomBytes(32).toString("hex"), { mode: 0o600 });
   return readFileSync(p, "utf8").trim();
+}
+
+/** Short public id of this data dir, so a CLI can tell its own engine from another install's. */
+export function homeId(): string {
+  return createHash("sha256").update(uhHome()).digest("hex").slice(0, 12);
 }

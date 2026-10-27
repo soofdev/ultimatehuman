@@ -16,7 +16,8 @@ const USAGE = `ultimatehuman <command>
   stop        Stop the engine started by init
   service     install | uninstall | status (systemd user unit / launchd agent)
 
-Every interactive step has a flag; pass --non-interactive to fail instead of prompting.`;
+Every interactive step has a flag (init: --project <posthog id>, --repo owner/name);
+pass --non-interactive to take the detected defaults instead of prompting.`;
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
@@ -29,9 +30,17 @@ async function main(argv: string[]): Promise<number> {
       json: { type: "boolean" },
       fix: { type: "boolean" },
       config: { type: "string" },
+      project: { type: "string" },
+      repo: { type: "string" },
     },
   });
-  const flags = { nonInteractive: values["non-interactive"] === true, json: values.json === true, fix: values.fix === true };
+  const flags = {
+    nonInteractive: values["non-interactive"] === true,
+    json: values.json === true,
+    fix: values.fix === true,
+    ...(typeof values.project === "string" ? { project: values.project } : {}),
+    ...(typeof values.repo === "string" ? { repo: values.repo } : {}),
+  };
   switch (command) {
     case "init":
       return init(flags, positionals);

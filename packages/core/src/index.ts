@@ -1,7 +1,7 @@
 export { ConfigSchema, configJsonSchema, type Config } from "./config/schema";
 export { loadConfig, writeConfig, resolveSecretRefs, defaultConfigPath, describeRef, MissingEnvVarError } from "./config/load";
 export { getPath, setPath } from "./config/paths";
-export { uhHome, ensureHome, controlKey } from "./home";
+export { uhHome, ensureHome, controlKey, homeId } from "./home";
 export { WindowTracker } from "./governor/tracker";
 export { runClaude, parseRateLimit, claudeBin, type RateLimitReading } from "./runner/claude";
 export { readOnlyHttp } from "./plugins/http";

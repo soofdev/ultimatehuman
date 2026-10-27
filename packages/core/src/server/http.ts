@@ -5,6 +5,7 @@ import { join, extname, normalize } from "node:path";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import { LoginLinks } from "./login-links";
+import { homeId } from "../home";
 
 export interface Route {
   (req: IncomingMessage, body: any, params: Record<string, string>): Promise<{ status?: number; json: unknown }>;
@@ -70,21 +71,21 @@ export function startServer(o: ServerOptions): Promise<RunningServer> {
         let raw = "";
         for await (const chunk of req) raw += chunk;
         const body = raw ? JSON.parse(raw) : {};
-        if (req.method === "GET" && path === "/api/health") return send(res, 200, { ok: true, version: "0.1.0-slice" });
+        if (req.method === "GET" && path === "/api/health") return send(res, 200, { ok: true, version: "0.1.0-slice", home: homeId() });
         if (req.method === "POST" && path === "/api/auth/redeem") {
           const sid = links.redeem(String(body.code ?? ""));
           if (!sid) return send(res, 401, { error: "This login link was already used or has expired. Run `ultimatehuman dashboard` for a new one." });
-          return send(res, 200, { ok: true }, { "set-cookie": `uh_sid=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${7 * 24 * 3600}` });
+          return send(res, 200, { ok: true }, { "set-cookie": `uh_sid_${o.port}=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${7 * 24 * 3600}` });
         }
         if (req.method === "POST" && path === "/api/auth/link") {
           if (!isControl(req)) return send(res, 403, { error: "control key required" });
           return send(res, 200, { url: `http://${o.host}:${o.port}/login#code=${links.issue()}` });
         }
         const control = isControl(req);
-        const sid = cookie(req, "uh_sid");
+        const sid = cookie(req, `uh_sid_${o.port}`);
         if (!control && !links.check(sid)) return send(res, 401, { error: "not signed in" });
         if (!control && req.method !== "GET" && req.headers["x-uh-csrf"] !== csrfFor(sid!)) return send(res, 403, { error: "missing CSRF header" });
-        if (req.method === "POST" && path === "/api/auth/logout") return send(res, 200, { ok: true }, { "set-cookie": "uh_sid=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" });
+        if (req.method === "POST" && path === "/api/auth/logout") return send(res, 200, { ok: true }, { "set-cookie": `uh_sid_${o.port}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0` });
         for (const r of compiled) {
           if (r.method !== req.method) continue;
           const m = r.re.exec(path);
@@ -116,7 +117,7 @@ export function startServer(o: ServerOptions): Promise<RunningServer> {
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
   server.on("upgrade", (req, socket, head) => {
-    if (new URL(req.url ?? "/", "http://x").pathname !== "/api/events" || !links.check(cookie(req, "uh_sid"))) {
+    if (new URL(req.url ?? "/", "http://x").pathname !== "/api/events" || !links.check(cookie(req, `uh_sid_${o.port}`))) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
