@@ -1,0 +1,16 @@
+// Copy to ~/.ultimatehuman/config.json5. Secrets are ${ENV_VAR} references only.
+{
+  version: 1,
+  auth: {
+    sources: [
+      { id: "sub", kind: "claude_login" },
+      // { id: "key", kind: "anthropic_api_key", apiKey: "${ANTHROPIC_API_KEY}", dailyCapUsd: 5 },
+    ],
+  },
+  governor: { humanReservePct: 30 },
+  radar: { schedule: "0 7 * * *", lookbackHours: 24 },
+  plugins: {
+    sentry: { credentials: { authToken: "${SENTRY_AUTH_TOKEN}" } },
+    github: { credentials: { token: "${GITHUB_TOKEN}", repo: "owner/repo" } },
+  },
+}

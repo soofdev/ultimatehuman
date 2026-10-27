@@ -1,0 +1,14 @@
+{
+  "name": "@ultimatehuman/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The engine daemon: config, auth sources, window governor, radar runs, store, local HTTP/WS server.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc -p tsconfig.json" },
+  "dependencies": {
+    "@ultimatehuman/sdk": "workspace:*",
+    "json5": "^2.2.3",
+    "zod": "^4.0.0"
+  }
+}

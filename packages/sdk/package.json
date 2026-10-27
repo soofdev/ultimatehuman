@@ -1,0 +1,9 @@
+{
+  "name": "@ultimatehuman/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Types shared by the engine, plugins and dashboard. No runtime dependencies.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc -p tsconfig.json" }
+}
