@@ -17,7 +17,7 @@ export function renderIssue(f: Finding, labels: readonly string[]): { title: str
     for (const p of f.rootCause.codePointers) {
       const loc = `${p.path}${p.line ? `:${p.line}` : ""}`;
       lines.push(`- ${p.url ? `[\`${loc}\`](${p.url})` : `\`${loc}\``}${p.why ? `: ${p.why}` : ""}`);
-      if (p.text) lines.push(`  \`\`\`\n  ${p.text}\n  \`\`\``);
+      if (p.text) lines.push("  ```", `  ${p.text}`, "  ```");
     }
   }
   if (f.rootCause.ruledOut?.length) lines.push("", "**Ruled out:**", ...f.rootCause.ruledOut.map((x) => `- ${x}`));

@@ -8,7 +8,7 @@ function inline(s: string, key = 0): ReactNode[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(s))) {
     if (m.index > last) out.push(s.slice(last, m.index));
-    if (m[1]) out.push(<a key={`${key}-${m.index}`} href={m[2]} target="_blank" rel="noreferrer">{m[1]}</a>);
+    if (m[1]) out.push(<a key={`${key}-${m.index}`} href={m[2]} target="_blank" rel="noreferrer">{/^`[^`]+`$/.test(m[1]) ? <code>{m[1].slice(1, -1)}</code> : m[1]}</a>);
     else if (m[3]) out.push(<b key={`${key}-${m.index}`}>{m[3]}</b>);
     else if (m[4]) out.push(<code key={`${key}-${m.index}`}>{m[4]}</code>);
     last = m.index + m[0].length;
@@ -33,6 +33,14 @@ export function Markdown({ text }: { text: string }) {
       const items: ReactNode[] = [];
       while (i < lines.length && (/^- /.test(lines[i]!) || /^  /.test(lines[i]!))) {
         const it = lines[i]!;
+        if (/^  ```/.test(it)) {
+          const code: string[] = [];
+          i++;
+          while (i < lines.length && !/^  ```/.test(lines[i]!)) code.push(lines[i++]!.slice(2));
+          items.push(<pre key={i} className="md-code">{code.join("\n")}</pre>);
+          i++;
+          continue;
+        }
         if (/^  > /.test(it)) items.push(<blockquote key={i} style={{ margin: "4px 0 6px" }}>{inline(it.slice(4), i)}</blockquote>);
         else if (/^- /.test(it)) items.push(<li key={i}>{inline(it.slice(2), i)}</li>);
         i++;

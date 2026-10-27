@@ -267,3 +267,4 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .cp-c { color: var(--ink-3); font-size: 12px; }
 .cp pre { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; word-break: break-word; background: var(--surface); border-radius: 7px; padding: 6px 9px; }
 .cp-w { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+.md-code { margin: 4px 0 8px; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; white-space: pre-wrap; word-break: break-word; list-style: none; }
