@@ -181,6 +181,17 @@ Claude auth is a list of sources tried in `auth.order` (default: listed order):
 
 Public docs describe only "subscription first, API key when you need more". With `switchOnExhaustion: true`, the pool moves to the next source when one is exhausted. Otherwise work parks.
 
+### 5.1b Account setup UX (HARD requirement — claude_luxure parity)
+
+Setting up CLI accounts must be as crystal-clear as the claude_luxure account picker (reference implementation: `vincent38wargnier/claude_luxure`, `src/cli/*-bridge.ts`, `AccountProvider` in `src/shared/types.ts`). Non-negotiables:
+
+1. **Zero-step default.** If a Claude Code login exists on the machine, `init` uses it and prints one line: `✓ Claude · signed in via <source> · uses your subscription`. No question asked.
+2. **One command / one card to add more.** `ultimatehuman accounts add` (CLI) and an **Accounts** card (dashboard) offer a flat picker: `Claude login` / `Claude setup-token (paste)` / `API key (paste + daily cap)` / `Custom endpoint (base URL + key env)` — later `Codex login`. Max ONE question per choice; secrets pasted once are stored chmod-600 local, config holds only refs.
+3. **Every account is live-probed on add** and shows its proof line (`answered in 2.8s · window 12% used · resets 00:20`). A failing account is never saved silently.
+4. **The accounts list IS the policy.** Rows show provider badge, label, live window meter; the list order is the fallback order; `switchOnExhaustion` is a visible toggle. Exactly like luxure's account picker, no hidden config.
+5. **Per-provider runner bridges** normalize CLI streams into common events + a usage reading (port ClaudeBridge/CodexBridge from claude_luxure). The governor consumes "remaining budget" from the bridge interface, never from claude-specific fields. v1 ships `claude` + `custom`; `codex` bridge is a port, v1.5.
+6. **Findings display the model that produced them.** Provider freedom never hides behind the brand's precision claim.
+
 ### 5.2 Reading the real window
 
 - The runner invokes `claude -p --output-format stream-json`. The stream carries `rate_limit_event` messages with:
