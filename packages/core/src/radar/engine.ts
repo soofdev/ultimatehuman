@@ -266,6 +266,7 @@ export class Radar {
     if (tr.isStale(cfg.governor.staleAfterMin)) {
       const probe = await runClaude({ prompt: "Reply with the single word ok.", cwd, model: "haiku", maxTurns: 1, env: await this.d.runnerEnv(), tools: [] });
       for (const r of probe.rateLimits) tr.ingest(r, run.id);
+      this.d.emit({ type: "window.updated", window: tr.status() });
     }
     const adm = tr.admit(kind);
     if (!adm.admit) {

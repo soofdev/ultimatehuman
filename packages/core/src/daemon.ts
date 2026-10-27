@@ -97,6 +97,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       "GET /api/onboarding": async () => ({ json: store.getKv("onboarding") ?? null }),
       "POST /api/onboarding": async (_req, body) => {
         store.setKv("onboarding", body);
+        if (body.window && typeof body.window === "object" && !tracker.reading()) {
+          tracker.ingest(body.window);
+          emit({ type: "window.updated", window: tracker.status() });
+        }
         emit({ type: "onboarding.updated", onboarding: body });
         return { json: { ok: true } };
       },
