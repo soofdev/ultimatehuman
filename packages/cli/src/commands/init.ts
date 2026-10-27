@@ -163,6 +163,12 @@ export async function init(flags: GlobalFlags, _args: string[]): Promise<number>
       );
       projectId = String(projects[i]!.id);
     }
+    const chosen = projects.find((x) => String(x.id) === projectId);
+    if (chosen && projects.length > 1) {
+      const watch = `Watching "${chosen.name}" (${chosen.id}) · ${chosen.events7d.toLocaleString("en-US")} events in the last 7 days`;
+      line.ok(p.manifest.displayName, watch);
+      add({ id: `${p.manifest.id}.project`, label: p.manifest.displayName, status: "ok", summary: watch, detail: `${projects.length} projects visible to this key; you picked this one in init` });
+    }
     pluginConfig[p.manifest.id] = {
       credentials: { [secret.key]: `\${${found[p.manifest.id]!.env}}`, ...(hostField ? { [hostField.key]: host } : {}) },
       options: { projectId, excludeTeamMembers: true },

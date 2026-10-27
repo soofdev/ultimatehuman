@@ -205,13 +205,14 @@ export class Radar {
 
     for (let i = run.nextCluster; i < run.clusters.length; i++) {
       const c = run.clusters[i]!;
-      this.d.tracker.queued = run.clusters.length - i;
+      this.d.tracker.queued = run.clusters.length - i - 1;
       const parked = await this.processCluster(run, c, i, dir);
       if (parked) return;
       run.nextCluster = i + 1;
       this.save(run);
     }
     this.d.tracker.queued = 0;
+    this.d.emit({ type: "window.updated", window: this.d.tracker.status() });
     this.phaseEnd(run, pr, `${run.findings} finding${run.findings === 1 ? "" : "s"} passed the gate`);
     const pd = this.phaseStart(run, "ready");
     if (run.findings === 0) run.emptyReason = emptyReason(run, cfg.radar.minUsersAffected);

@@ -13,7 +13,7 @@ function Github({ size = 14 }: { size?: number }) {
 import { Markdown } from "./Markdown";
 import { day, dayTime, plural } from "./fmt";
 
-const TREND: Record<string, string> = { new: "New in this window", rising: "Rising", steady: "Steady", falling: "Falling" };
+const TREND: Record<string, string> = { new: "New", rising: "Rising", steady: "Steady", falling: "Falling" };
 const KIND: Record<string, string> = { recording: "Session replay", event_series: "Event data", error_group: "Error group", funnel: "Funnel" };
 
 export function FindingCard({ f, defaultOpen = false, onChanged }: { f: any; defaultOpen?: boolean; onChanged?: () => void }) {
