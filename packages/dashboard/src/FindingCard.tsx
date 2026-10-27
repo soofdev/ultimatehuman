@@ -105,6 +105,7 @@ export function FindingCard({ f, defaultOpen = false, onChanged }: { f: any; def
                     </span>
                     <span>read {day(e.observedAt)}</span>
                   </div>
+                  {e.label && <div className="ev-l">{e.label}</div>}
                   <pre>{e.excerpt}</pre>
                   <a href={e.url} target="_blank" rel="noreferrer">
                     {e.kind === "recording" ? "Watch the replay in PostHog" : "Open the data in PostHog"} <ExternalLink size={12} />

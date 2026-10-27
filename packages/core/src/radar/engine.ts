@@ -538,7 +538,8 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
   const evidence: Evidence[] = cited.map((id) => {
     const e = b.evidence.get(id)!;
     const quote = d.rootCause!.reasoning.flatMap((r) => r.quotes).find((q) => q.evidenceId === id)?.text;
-    return { id, sourcePluginId: "posthog", kind: e.kind, url: e.url, excerpt: redact(quote ?? e.text.split("\n")[0]!), observedAt: run.startedAt };
+    const label = e.text.split("\n")[0]!.replace(/^\[\w+\]\s*/, "");
+    return { id, sourcePluginId: "posthog", kind: e.kind, url: e.url, excerpt: redact(quote ?? label), observedAt: run.startedAt, label } as Evidence;
   });
   const fp = d.fingerprint!;
   const f: Finding & Record<string, unknown> = {

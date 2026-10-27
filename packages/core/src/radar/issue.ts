@@ -14,7 +14,7 @@ export function renderIssue(f: Finding, labels: readonly string[]): { title: str
   for (const r of f.rootCause.reasoning) lines.push(`- ${r.claim} (${r.evidenceIds.map((id) => `[${id}](${ev.get(id)?.url ?? "#"})`).join(", ")})`);
   if (f.rootCause.ruledOut?.length) lines.push("", "**Ruled out:**", ...f.rootCause.ruledOut.map((x) => `- ${x}`));
   lines.push("", "## Evidence");
-  for (const e of f.evidence) lines.push(`- **${e.id}** · ${e.kind} · [open in ${e.sourcePluginId}](${e.url})`, `  > ${e.excerpt.replace(/\n/g, "\n  > ")}`);
+  for (const e of f.evidence) lines.push(`- **${e.id}** · ${(e as { label?: string }).label ?? e.kind} · [open in ${e.sourcePluginId}](${e.url})`, `  > ${e.excerpt.replace(/\n/g, "\n  > ")}`);
   lines.push("", "## Reproduction");
   if ("steps" in f.reproduction) f.reproduction.steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
   else lines.push(`Not established: ${f.reproduction.notEstablished}`);
