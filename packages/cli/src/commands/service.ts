@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { basename, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir, userInfo } from "node:os";
 import { ensureHome, homeId, loadConfig, uhHome } from "@ultimatehuman/core";
@@ -46,6 +46,21 @@ function readEnvFile(p: string): Map<string, string> {
     if (hit) m.set(hit[1]!, hit[2]!.replace(/^(['"])(.*)\1$/, "$2"));
   }
   return m;
+}
+
+/** The node on PATH that is this node (e.g. /opt/homebrew/bin/node), so a package-manager upgrade
+ *  that swaps the versioned Cellar dir does not leave the unit pointing at a deleted binary. */
+function stableNode(): string {
+  const real = realpathSync(process.execPath);
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    const cand = join(dir, "node");
+    try {
+      if (dir && realpathSync(cand) === real) return cand;
+    } catch {
+      /* not here */
+    }
+  }
+  return process.execPath;
 }
 
 async function health(port: number): Promise<{ home?: string; pid?: number } | null> {
@@ -132,6 +147,12 @@ async function install(): Promise<number> {
   writeFileSync(envPath(), [...env].map(([k, v]) => `${k}=${v}`).join("\n") + "\n", { mode: 0o600 });
   chmodSync(envPath(), 0o600);
 
+  // Reinstall: stop the current service first so its supervisor does not respawn what we stop next.
+  if (existsSync(unitPath())) {
+    if (darwin) sh("launchctl", ["bootout", `${domain()}/${label()}`]);
+    else sh("systemctl", ["--user", "stop", label()]);
+    for (let i = 0; i < 50 && (await health(port))?.home === homeId(); i++) await new Promise((r) => setTimeout(r, 100));
+  }
   // An engine started by init (not supervised) holds the port: hand over to the service.
   const pidFile = join(home, "engine.pid");
   const h = await health(port);
@@ -148,7 +169,7 @@ async function install(): Promise<number> {
   }
 
   const cli = fileURLToPath(import.meta.url);
-  const args = [process.execPath, `--env-file=${envPath()}`, "--disable-warning=ExperimentalWarning", cli, "start"];
+  const args = [stableNode(), `--env-file=${envPath()}`, "--disable-warning=ExperimentalWarning", cli, "start"];
   mkdirSync(join(unitPath(), ".."), { recursive: true });
   if (darwin) {
     writeFileSync(unitPath(), plist(args), { mode: 0o644 });
