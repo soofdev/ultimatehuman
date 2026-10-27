@@ -16,6 +16,11 @@ const OUTCOME: Record<string, string> = {
   awaiting_ruling: "In your feed",
 };
 
+function passLabel(r: any): string {
+  const span = r.lookbackHours % 24 === 0 ? `${r.lookbackHours / 24}-day` : `${r.lookbackHours}-hour`;
+  return r.trigger === "onboarding" ? `First pass (${span})` : r.trigger === "schedule" ? `Daily ${span} pass` : `${span[0].toUpperCase()}${span.slice(1)} pass`;
+}
+
 export function Runs({ s }: { s: AppState }) {
   const [runs, setRuns] = useState<any[]>([]);
   const [sel, setSel] = useState<string | null>(null);
@@ -45,7 +50,7 @@ export function Runs({ s }: { s: AppState }) {
         <div className="card runlist">
           {runs.map((r) => (
             <button key={r.id} aria-current={r.id === sel} onClick={() => setSel(r.id)}>
-              <div className="rl-t">{r.trigger === "onboarding" ? "First pass" : r.trigger === "schedule" ? "Scheduled pass" : "Manual pass"}</div>
+              <div className="rl-t">{passLabel(r)}</div>
               <div className="rl-s">
                 {dayTime(r.startedAt)} · {r.phase === "done" ? plural(r.findings, "finding") : r.phase}
               </div>
@@ -61,24 +66,6 @@ export function Runs({ s }: { s: AppState }) {
               </div>
               <div className="card-b">
                 <RunTimeline run={run} />
-              </div>
-            </section>
-            <section className="card">
-              <div className="card-h">
-                <h3>Dropped drafts</h3>
-                <span className="sub">{plural(nonFloor.length, "draft")} root-caused and dropped · {floor.length} clusters filtered before any agent ran</span>
-              </div>
-              <div className="card-b">
-                {[...nonFloor, ...floor].map((d: any, i: number) => (
-                  <div className="drop-row" key={i}>
-                    <span className="stagetag">{STAGE[d.stage] ?? d.stage}</span>
-                    <div>
-                      <div style={{ fontWeight: 560 }}>{d.title ?? d.clusterTitle}</div>
-                      <div className="why">{d.reason}</div>
-                    </div>
-                  </div>
-                ))}
-                {!run.dropped?.length && <p className="note">Nothing dropped.</p>}
               </div>
             </section>
             {run.ruled?.length > 0 && (
@@ -102,6 +89,24 @@ export function Runs({ s }: { s: AppState }) {
             )}
             <section className="card">
               <div className="card-h">
+                <h3>Dropped drafts</h3>
+                <span className="sub">{plural(nonFloor.length, "draft")} root-caused and dropped · {floor.length} clusters filtered before any agent ran</span>
+              </div>
+              <div className="card-b">
+                {[...nonFloor, ...floor].map((d: any, i: number) => (
+                  <div className="drop-row" key={i}>
+                    <span className="stagetag">{STAGE[d.stage] ?? d.stage}</span>
+                    <div>
+                      <div style={{ fontWeight: 560 }}>{d.title ?? d.clusterTitle}</div>
+                      <div className="why">{d.reason}</div>
+                    </div>
+                  </div>
+                ))}
+                {!run.dropped?.length && <p className="note">Nothing dropped.</p>}
+              </div>
+            </section>
+            <section className="card">
+              <div className="card-h">
                 <h3>Run detail</h3>
                 <span className="sub mono">{run.id}</span>
               </div>
@@ -112,7 +117,7 @@ export function Runs({ s }: { s: AppState }) {
                   </p>
                 ))}
                 <p className="note" style={{ margin: 0 }}>
-                  <Info size={14} style={{ flexShrink: 0, marginTop: 2 }} /> Agent steps: {(run.steps ?? []).filter((x: any) => x.model).length} on Claude {run.steps?.find((x: any) => x.model)?.model ?? ""}. Notional API-equivalent cost reported by the CLI: ${run.costUsd?.toFixed(2)} (billed to your subscription, not charged).
+                  <Info size={14} style={{ flexShrink: 0, marginTop: 2 }} /> {(run.steps ?? []).some((x: any) => x.model) ? `Agent steps: ${(run.steps ?? []).filter((x: any) => x.model).length} on Claude ${run.steps.find((x: any) => x.model).model}.` : "No agent step ran in this pass."} Notional API-equivalent cost reported by the CLI: ${run.costUsd?.toFixed(2)} (billed to your subscription, not charged).
                 </p>
               </div>
             </section>

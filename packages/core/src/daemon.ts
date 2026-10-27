@@ -90,7 +90,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       for (const run of store.listRuns(30)) {
         const d = run.dropped?.find((x) => x.clusterId === clusterId);
         if (d) {
-          users = d.usersAffected ?? Number(/^(\d+) user/.exec(d.reason)?.[1] ?? 0);
+          users = d.usersAffected ?? run.clusters.find((c) => c.id === clusterId)?.usersAffected ?? Number(/^(\d+) user/.exec(d.reason)?.[1] ?? 0);
           title = d.title ?? d.clusterTitle;
           break;
         }

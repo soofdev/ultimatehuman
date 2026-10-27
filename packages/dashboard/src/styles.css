@@ -378,7 +378,8 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .rl-chev { color: var(--ink-4); transition: transform 0.15s; }
 .rline.open .rl-chev { transform: rotate(90deg); }
 .rline-b { padding: 4px 16px 16px 50px; border-top: 1px solid var(--line); }
-.rnote { margin: 10px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.rnote { margin: 10px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.5; padding-left: 14px; position: relative; }
+.rnote::before { content: ""; position: absolute; left: 0; top: 8px; width: 5px; height: 5px; border-radius: 50%; background: var(--line-strong); }
 
 /* dropped draft cards */
 .dcard { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
@@ -406,8 +407,12 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .rtag.dismiss { background: var(--bad-soft); color: #a3260f; }
 .rtag.park { background: #ebe9e3; color: var(--ink-2); }
 .rtag.file { background: var(--ok-soft); color: var(--ok); }
+.rtag.back { background: var(--accent-soft); color: var(--accent-ink); margin-left: 8px; vertical-align: 1px; }
 
 /* setup hand-off */
 .landed { display: flex; gap: 12px; align-items: center; padding: 10px 10px 10px 16px; margin-bottom: 22px; border-radius: 12px; background: var(--ok-soft); color: #075f47; font-size: 13.5px; }
 .landed span { flex: 1; }
 .landed .btn { color: #075f47; min-height: 30px; padding: 4px 8px; }
+.hist .hist-more { display: block; }
+.hist .hist-more .linkbtn { margin-left: 26px; font-size: 12px; }
+.hist .h-checked .hist-dot { background: #eeedf9; color: var(--accent); }

@@ -447,7 +447,7 @@ export class Radar {
       if (r?.ruling === "park") {
         if (after(c, r.at)) {
           store.addRuling({ clusterId: c.id, ruling: "resurfaced", reason: null, by: "radar", note: `new occurrence ${shortDate(c.lastSeen)}, after you parked it`, title: c.title });
-          add(c, "resurfaced", `parked ${shortDate(r.at)}; a new occurrence on ${shortDate(c.lastSeen)} brings it back to New`);
+          add(c, "resurfaced", `parked ${shortDate(r.at)}; a new occurrence on ${shortDate(c.lastSeen)} brings it back for a fresh look`);
           keep.push(c);
         } else add(c, "parked", `parked ${shortDate(r.at)}; last occurrence ${shortDate(c.lastSeen)}, nothing new since your ruling. Stays parked.`);
         continue;
@@ -456,7 +456,7 @@ export class Radar {
         if (after(c, r.at)) {
           add(c, "recurred_after_filing", `filed ${shortDate(r.at)}; seen again ${shortDate(c.lastSeen)}: re-investigated as a recurrence`);
           keep.push(c);
-        } else add(c, "already_filed", `filed ${shortDate(r.at)}; no occurrence since. Not re-investigated.`);
+        } else add(c, "already_filed", `filed${r.dryRun ? " (dry run)" : ""} ${shortDate(r.at)}; no occurrence since. Not re-investigated.`);
         continue;
       }
       const open = findings.find((f: any) => f.clusterId === c.id && f.status === "new");
@@ -701,7 +701,7 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
 }
 
 function shortDate(iso: string): string {
-  return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC";
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
 function emptyReason(run: RunRecord, floor: number): string {

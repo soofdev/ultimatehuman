@@ -93,7 +93,9 @@ export function RunTimeline({ run }: { run: any }) {
           <div className="t-note">
             {parked
               ? `Parked to protect your reserve. Resumes at ${time(run.parkedUntil)} (${until(run.parkedUntil)}), no process left running.`
-              : rc
+              : rc && !clusters.length && rc.status === "done"
+                ? "Nothing needed an agent in this pass"
+                : rc
                 ? `${processed} of ${clusters.length} clusters done · ${plural(run.findings, "finding")} passed so far`
                 : "One agent step per cluster, then a deterministic gate and a second agent that tries to break the draft"}
           </div>
