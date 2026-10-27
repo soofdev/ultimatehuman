@@ -8,7 +8,7 @@ open-sourcing: either confirm the right to publish these files or rewrite them.
 `app/` and `tailwind.config.mjs` are byte-for-byte copies of the private app's
 files at its `test` branch, commit `1a0aa0bc`, kept at the SAME relative paths
 so their own imports (`./X`, `@/app/lib/...`) resolve unchanged. Served at
-`/administration/claims` (same path as the original).
+`/administration/claims` and `/administration/pipeline-live` (same paths as the original).
 
 | File here | Changed vs the original |
 | --- | --- |
@@ -17,7 +17,8 @@ so their own imports (`./X`, `@/app/lib/...`) resolve unchanged. Served at
 | `app/(app)/administration/claims/ClaimsClient.js` | none |
 | `app/(app)/administration/claims/FocusTicket.js`, `GateClient.js`, `MobileCockpit.js`, `PhoneTickets.js`, `PhoneViewer.js`, `PlanModal.js`, `PlanTesting.js`, `SuggestedBundles.js`, `TicketSort.js` | none |
 | `app/(app)/administration/layout.js` | none |
-| `app/(app)/administration/components/AdminSidebar.js` | brand only: +1 import of `BRAND`, the two `Admin Panel` titles read `{BRAND.appName}` |
+| `app/(app)/administration/components/AdminSidebar.js` | brand: +1 import of `BRAND`, the two `Admin Panel` titles read `{BRAND.appName}`; Vincent order (2026-10-27): the nav lists only Pipeline and Pipeline live (`RADAR_PAGES`), no Super Admin divider |
+| `app/(app)/administration/pipeline-live/page.js`, `LiveClient.js`, `app/lib/pipeline-live.js`, `app/lib/pipeline-live-data.js` | none (byte-identical, added 2026-10-27, same commit `1a0aa0bc`) |
 | `app/lib/pipeline-cockpit.js`, `app/lib/pipeline-gate.js` | none |
 | `app/globals.css`, `tailwind.config.mjs` | none |
 
@@ -27,11 +28,12 @@ original repo's git object directly.
 What makes them run outside Next.js (none of it inside `app/`):
 - `vite.config.ts` aliases `next/navigation`, `next/link`, `next-auth`,
   `next-auth/react`, `@/app/api/auth/[...nextauth]/route`, `@/lib/db/db` and the
-  three `@/app/models/*` imports to thin adapters in `src/verbatim/shims/`, and
+  four `@/app/models/*` imports to thin adapters in `src/verbatim/shims/`, and
   `@/` to this package root. A tiny plugin compiles JSX in `app/**/*.js`.
 - `src/verbatim/data-provider.js` is the ONE data mapping: engine `/api/cockpit`
-  -> the claim objects `page.js` reads through the model stand-ins, and the
-  page's own `/api/admin/claims/*` calls -> engine rulings.
+  -> the TICKET rows both pages read through the model stand-ins (findings and
+  dropped drafts are tickets; claims stay empty: no agent is connected), and the
+  pages' own `/api/admin/pipeline/*` calls -> engine rulings.
 - `src/verbatim/main.jsx` runs `layout.js` and `page.js` (the server components)
   once in the browser and mounts their output.
 - `src/verbatim/brand.js` is the brand constant (app name; the original has no logo).

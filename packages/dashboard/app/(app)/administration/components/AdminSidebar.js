@@ -485,13 +485,17 @@ const navigation = [
     // }
 ];
 
+// Vincent order (2026-10-27): the sidebar shows exactly these two pages.
+const RADAR_PAGES = ['/administration/claims', '/administration/pipeline-live'];
+
 export default function AdminSidebar() {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const pathname = usePathname();
     const { data: session } = useSession();
     const isSuperAdmin = session?.user?.isSuperAdmin;
-    const adminNav = navigation.filter(item => !item.superadminOnly);
-    const superAdminNav = navigation.filter(item => item.superadminOnly);
+    // Vincent order (2026-10-27): only the two pipeline pages, as plain entries.
+    const adminNav = navigation.filter(item => RADAR_PAGES.includes(item.href));
+    const superAdminNav = [];
 
     const NavLink = ({ item, onClick, textSize = 'text-sm', iconMargin = 'mr-3' }) => {
         const isActive = pathname === item.href;

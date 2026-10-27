@@ -46,6 +46,20 @@ export function Setup({ s, land }: { s: AppState; land: () => void }) {
         </p>
       </div>
 
+      <section className="card" data-pipeline-note>
+        <div className="card-h">
+          <h3>Where findings go</h3>
+        </div>
+        <div className="card-b">
+          <p>
+            New findings land on the Pipeline page as tickets under Needs decision: File to GitHub, Dismiss or Not now. Filed
+            ones move to Shipped; dismissals and the drafts the radar dropped show there as cancelled. Fixes arrive in v2:
+            until then Awaiting validation, Ready to merge and Manual stay empty, and Claims stays empty because no agent is
+            connected.
+          </p>
+        </div>
+      </section>
+
       <section className="card">
         <div className="card-h">
           <h3>Connections</h3>

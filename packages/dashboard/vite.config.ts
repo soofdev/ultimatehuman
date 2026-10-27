@@ -29,7 +29,7 @@ export default defineConfig({
       { find: /^next-auth$/, replacement: shim("next-auth.js") },
       { find: /^@\/app\/api\/auth\/\[\.\.\.nextauth\]\/route$/, replacement: shim("auth-route.js") },
       { find: /^@\/lib\/db\/db$/, replacement: shim("db.js") },
-      { find: /^@\/app\/models\/(platform-claim|pipeline-ticket|pipeline-bundles)$/, replacement: shim("model-$1.js") },
+      { find: /^@\/app\/models\/(platform-claim|pipeline-ticket|pipeline-bundles|pipeline-sync-status)$/, replacement: shim("model-$1.js") },
       { find: /^@\//, replacement: here("./") },
     ],
   },
