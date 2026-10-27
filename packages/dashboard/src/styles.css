@@ -56,7 +56,7 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .topbar { height: 60px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 36px; background: rgba(247, 247, 245, 0.86); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 5; }
 .crumb { font-weight: 600; font-size: 14px; color: var(--ink); }
 .crumb span { color: var(--ink-3); font-weight: 500; }
-.content { max-width: 940px; margin: 0 auto; padding: 36px 36px 80px; }
+.content { max-width: 980px; margin: 0 auto; padding: 36px 36px 80px; }
 .h1 { font-size: 26px; line-height: 1.2; letter-spacing: -0.022em; font-weight: 680; margin: 0 0 6px; }
 .lede { color: var(--ink-3); font-size: 15px; margin: 0 0 28px; max-width: 640px; }
 
@@ -71,7 +71,9 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 /* cards */
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .card-h { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); }
-.card-h h3 { margin: 0; font-size: 14px; font-weight: 620; }
+.card-h { gap: 16px; }
+.card-h h3 { margin: 0; font-size: 14px; font-weight: 620; white-space: nowrap; }
+.card-h .sub { text-align: right; }
 .card-h .sub { color: var(--ink-3); font-size: 13px; }
 .card-b { padding: 6px 20px; }
 .stack { display: flex; flex-direction: column; gap: 18px; }
@@ -109,7 +111,7 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .pill { font-size: 11.5px; font-weight: 550; padding: 2px 8px; border-radius: 99px; background: #f1f0ec; color: var(--ink-3); white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
 .pill.passed { background: var(--ok-soft); color: var(--ok); }
 .pill.running { background: var(--accent-soft); color: var(--accent-ink); }
-.pill.dropped { background: #f1f0ec; color: var(--ink-3); text-decoration: line-through; }
+.pill.dropped { background: #f1f0ec; color: var(--ink-3); }
 .pill.failed, .pill.parked { background: var(--warn-soft); color: var(--warn); }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -233,10 +235,10 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .runlist button[aria-current="true"] { background: var(--accent-soft); }
 .runlist .rl-t { font-weight: 600; font-size: 13px; }
 .runlist .rl-s { color: var(--ink-3); font-size: 12px; }
-.dropped { display: grid; grid-template-columns: 90px 1fr; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.dropped { display: grid; grid-template-columns: 104px 1fr; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .dropped:last-child { border-bottom: 0; }
 .dropped .why { color: var(--ink-3); }
-.stagetag { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); background: #f1f0ec; border-radius: 5px; padding: 2px 7px; justify-self: start; height: fit-content; }
+.stagetag { white-space: nowrap; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); background: #f1f0ec; border-radius: 5px; padding: 2px 7px; justify-self: start; height: fit-content; }
 
 /* config */
 .code { margin: 0; padding: 18px 20px; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; overflow: auto; color: var(--ink-2); white-space: pre; }

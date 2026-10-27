@@ -114,7 +114,7 @@ export function RunTimeline({ run }: { run: any }) {
                           <span key={k} className={`pill ${s.status}`} title={s.note ?? ""}>
                             {s.status === "running" && <Loader2 size={11} className="spin" />}
                             {STEP_LABEL[k]}
-                            {s.status === "running" ? ` ${span(s.startedAt)}` : ""}
+                            {s.status === "running" ? ` ${span(s.startedAt)}` : s.status === "dropped" ? " · dropped" : s.status === "parked" ? " · parked" : ""}
                           </span>
                         );
                       })}
