@@ -10,7 +10,7 @@ import { runClaude, extractJson, type ClaudeRunResult } from "../runner/claude";
 import { readOnlyHttp } from "../plugins/http";
 import { redact, hashUser } from "./redact";
 import { DraftSchema, ReviewSchema, rootCausePrompt, adversarialPrompt, type Draft, type Review, type CodeContext } from "./prompts";
-import type { Cluster, RunRecord, StepEntry, PhaseEntry } from "./types";
+import type { Cluster, RunRecord, StepEntry, PhaseEntry, RuledEntry } from "./types";
 
 export interface RadarDeps {
   home: string;
@@ -177,20 +177,22 @@ export class Radar {
 
     // 2. correlate (deterministic)
     const pr = this.phaseStart(run, "correlating");
-    const clusters = correlate(signals);
+    const all = correlate(signals);
+    const clusters = this.applyRulings(run, all);
     const floor = cfg.radar.minUsersAffected;
     const keep: Cluster[] = [];
     for (const c of clusters) {
       if (c.usersAffected < floor) {
-        run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "floor", reason: `${c.usersAffected} user${c.usersAffected === 1 ? "" : "s"} affected, below the ${floor}-user floor`, at: now() });
+        run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "floor", reason: `${c.usersAffected} user${c.usersAffected === 1 ? "" : "s"} affected, below the ${floor}-user floor`, usersAffected: c.usersAffected, at: now() });
       } else keep.push(c);
     }
     const cap = cfg.radar.maxFindingsPerRun * 2;
-    for (const c of keep.slice(cap)) run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "rank", reason: `ranked below the top ${cap} clusters`, at: now() });
+    for (const c of keep.slice(cap)) run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "rank", reason: `ranked below the top ${cap} clusters`, usersAffected: c.usersAffected, at: now() });
     run.clusters = keep.slice(0, cap);
     for (const c of run.clusters)
       run.steps.push({ clusterId: c.id, clusterTitle: c.title, step: "root_cause", status: "queued" });
-    this.phaseEnd(run, pr, `${clusters.length} clusters · ${run.clusters.length} above the ${floor}-user floor go to root-cause`);
+    const ruledN = all.length - clusters.length;
+    this.phaseEnd(run, pr, `${all.length} clusters${ruledN ? ` · ${ruledN} settled by your rulings` : ""} · ${run.clusters.length} above the ${floor}-user floor go to root-cause`);
     writeFileSync(join(dir, "signals.full.json"), JSON.stringify(signals), { mode: 0o600 });
     await this.rootCauseLoop(run);
   }
@@ -351,7 +353,7 @@ export class Radar {
     if (!r1) return true;
     if (!r1.ok) {
       this.endStep(run, s1, "failed", r1.error ?? "agent failed");
-      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "root_cause", reason: `agent step failed: ${r1.error}`, at: now() });
+      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "root_cause", reason: `agent step failed: ${r1.error}`, usersAffected: c.usersAffected, at: now() });
       return false;
     }
     const draft = await this.parseWithRepair<Draft>(run, s1, "root_cause", r1, cdir, DraftSchema as any);
@@ -359,12 +361,12 @@ export class Radar {
     writeFileSync(join(cdir, "draft.json"), JSON.stringify(draft, null, 2));
     if (!draft) {
       this.endStep(run, s1, "dropped", "answer failed schema validation twice");
-      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "root_cause", reason: "the agent's answer failed schema validation twice", at: now() });
+      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "root_cause", reason: "the agent's answer failed schema validation twice", usersAffected: c.usersAffected, at: now() });
       return false;
     }
     if (draft.verdict === "no_finding") {
       this.endStep(run, s1, "dropped", draft.reason);
-      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "root_cause", reason: `agent declined: ${draft.reason}`, at: now() });
+      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "root_cause", reason: `agent declined: ${draft.reason}`, usersAffected: c.usersAffected, at: now() });
       return false;
     }
     this.endStep(run, s1, "passed", draft.title);
@@ -374,7 +376,7 @@ export class Radar {
     const gate = deterministicGate(draft, bundle, c, cfg.radar.minUsersAffected, run.code);
     if (!gate.ok) {
       this.endStep(run, s2, "dropped", gate.reason);
-      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "gate", reason: gate.reason, title: draft.title ?? "", at: now() });
+      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "gate", reason: gate.reason, usersAffected: c.usersAffected, title: draft.title ?? "", at: now() });
       return false;
     }
     this.endStep(run, s2, "passed", gate.note);
@@ -389,7 +391,7 @@ export class Radar {
     if (!review || review.verdict === "broken") {
       const why = review ? review.reasons.join(" ") : `review step failed: ${r3.error ?? "unparseable answer"}`;
       this.endStep(run, s3, "dropped", why);
-      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "adversarial", reason: why, title: draft.title ?? "", at: now() });
+      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "adversarial", reason: why, usersAffected: c.usersAffected, title: draft.title ?? "", at: now() });
       return false;
     }
     this.endStep(run, s3, "passed", review.verdict === "holds" ? "holds as written" : `partly: ${review.reasons[0]}`);
@@ -397,10 +399,11 @@ export class Radar {
     // dedupe (local store; no GitHub search in this build)
     const s4 = this.step(run, c, "dedupe");
     const finding = assembleFinding(run, c, draft, review, bundle);
-    const rule = this.d.store.dismissRule(finding.dedupe.fingerprint);
+    const resurfaced = run.ruled?.some((r) => r.clusterId === c.id && (r.outcome === "resurfaced" || r.outcome === "escalated"));
+    const rule = resurfaced ? undefined : this.d.store.dismissRule(finding.dedupe.fingerprint);
     if (rule) {
       this.endStep(run, s4, "dropped", `dismissed earlier: ${rule.reason}`);
-      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "dedupe", reason: `suppressed by a dismiss rule: ${rule.reason}`, title: finding.title, at: now() });
+      run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "dedupe", reason: `suppressed by a dismiss rule: ${rule.reason}`, usersAffected: c.usersAffected, title: finding.title, at: now() });
       return false;
     }
     const prior = this.d.store.findingsByFingerprint(finding.dedupe.fingerprint).filter((f) => f.runId !== run.id);
@@ -413,6 +416,72 @@ export class Radar {
     this.save(run);
     this.d.emit({ type: "finding.new", finding });
     return false;
+  }
+
+  /**
+   * Rulings are ground truth and run before any agent spend. Per cluster, the ruling in force decides:
+   * - Dismiss: suppressed. It comes back only if the impact escalates (at least twice the people, and 2 more, than when dismissed).
+   * - Not now: stays parked until a run sees an occurrence after the ruling; then it resurfaces in New and is re-investigated.
+   * - File: tracked for recurrence. An occurrence after filing re-investigates it as a recurrence; otherwise it is skipped.
+   * - No ruling yet, but already in the feed: not re-investigated. New occurrences refresh the card's impact numbers.
+   */
+  applyRulings(run: RunRecord, clusters: Cluster[]): Cluster[] {
+    const store = this.d.store;
+    const ruled: RuledEntry[] = (run.ruled = []);
+    const after = (c: Cluster, iso?: string) => !!iso && Date.parse(c.lastSeen) > Date.parse(iso);
+    const findings = store.listFindings();
+    const keep: Cluster[] = [];
+    const add = (c: Cluster, outcome: RuledEntry["outcome"], note: string) => ruled.push({ clusterId: c.id, clusterTitle: c.title, outcome, note, at: now() });
+    for (const c of clusters) {
+      const r = store.currentRuling(c.id);
+      if (r?.ruling === "dismiss") {
+        const base = r.usersAtRuling ?? 0;
+        if (base && c.usersAffected >= Math.max(base * 2, base + 2)) {
+          store.addRuling({ clusterId: c.id, ruling: "resurfaced", reason: null, by: "radar", note: `${c.usersAffected} people now, ${base} when you dismissed it`, title: c.title });
+          if (r.fingerprint) store.removeDismissRule(r.fingerprint);
+          add(c, "escalated", `dismissed ${shortDate(r.at)}, but ${c.usersAffected} people are affected now (${base} then): back in New and re-investigated`);
+          keep.push(c);
+        } else add(c, "suppressed", `dismissed ${shortDate(r.at)}: "${r.reason}". Not re-investigated.`);
+        continue;
+      }
+      if (r?.ruling === "park") {
+        if (after(c, r.at)) {
+          store.addRuling({ clusterId: c.id, ruling: "resurfaced", reason: null, by: "radar", note: `new occurrence ${shortDate(c.lastSeen)}, after you parked it`, title: c.title });
+          add(c, "resurfaced", `parked ${shortDate(r.at)}; a new occurrence on ${shortDate(c.lastSeen)} brings it back to New`);
+          keep.push(c);
+        } else add(c, "parked", `parked ${shortDate(r.at)}; last occurrence ${shortDate(c.lastSeen)}, nothing new since your ruling. Stays parked.`);
+        continue;
+      }
+      if (r?.ruling === "file") {
+        if (after(c, r.at)) {
+          add(c, "recurred_after_filing", `filed ${shortDate(r.at)}; seen again ${shortDate(c.lastSeen)}: re-investigated as a recurrence`);
+          keep.push(c);
+        } else add(c, "already_filed", `filed ${shortDate(r.at)}; no occurrence since. Not re-investigated.`);
+        continue;
+      }
+      const open = findings.find((f: any) => f.clusterId === c.id && f.status === "new");
+      if (open) {
+        const fresh = after(c, open.impact.lastSeen);
+        if (fresh) {
+          (open as any).impact = { ...open.impact, usersAffected: c.usersAffected, occurrences: c.occurrences, lastSeen: c.lastSeen, trend: c.trend };
+          (open as any).refreshedBy = { runId: run.id, at: now() };
+          store.saveFinding(open);
+          this.d.emit({ type: "finding.updated", finding: open });
+        }
+        add(c, "awaiting_ruling", fresh ? `already in your feed; impact refreshed to ${c.usersAffected} people, ${c.occurrences} occurrences. Not re-investigated.` : "already in your feed, waiting for your ruling. Not re-investigated.");
+        continue;
+      }
+      keep.push(c);
+    }
+    const n = (o: RuledEntry["outcome"]) => ruled.filter((x) => x.outcome === o);
+    const titles = (xs: RuledEntry[]) => xs.map((x) => x.clusterTitle).join("; ");
+    if (n("suppressed").length) run.notes.push(`${n("suppressed").length} suppressed by ruling: ${titles(n("suppressed"))}. Dismissed items stay out unless their impact escalates.`);
+    if (n("parked").length) run.notes.push(`${n("parked").length} parked by ruling, checked for new evidence: no occurrence after your ruling, so ${n("parked").length === 1 ? "it stays" : "they stay"} parked (${titles(n("parked"))}). A parked item resurfaces in New the first time a run sees an occurrence after you parked it.`);
+    if (n("resurfaced").length) run.notes.push(`${n("resurfaced").length} resurfaced from Parked on new evidence: ${titles(n("resurfaced"))}.`);
+    if (n("escalated").length) run.notes.push(`${n("escalated").length} dismissed item came back because its impact escalated: ${titles(n("escalated"))}.`);
+    const settled = [...n("already_filed"), ...n("awaiting_ruling")];
+    if (settled.length) run.notes.push(`${settled.length} already in your feed or filed, not re-investigated (no agent spend): ${titles(settled)}.`);
+    return keep;
   }
 
   /** Writes cluster.md + evidence/*.txt. Evidence ids: S# = signal aggregates, T# = session timelines. */
@@ -625,9 +694,14 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
     status: "new",
     createdAt: new Date().toISOString(),
     route: c.route,
+    clusterId: c.id,
     review: { verdict: review.verdict, reasons: review.reasons },
   };
   return f;
+}
+
+function shortDate(iso: string): string {
+  return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC";
 }
 
 function emptyReason(run: RunRecord, floor: number): string {
@@ -637,12 +711,13 @@ function emptyReason(run: RunRecord, floor: number): string {
   const days = run.lookbackHours % 24 === 0 ? `${run.lookbackHours / 24} days` : `${run.lookbackHours} hours`;
   const by: Record<string, string> = { root_cause: "the root-cause agent", gate: "the evidence gate", adversarial: "the adversarial review", dedupe: "dedupe" };
   const parts = [`${run.signalsCollected} signals from ${src} over the last ${days}`];
+  if (run.ruled?.length) parts.push(`${run.ruled.length} already settled by your rulings or waiting in your feed`);
   if (floorN) parts.push(`${floorN} ${floorN === 1 ? "pattern" : "patterns"} touched fewer than ${floor} people`);
   for (const [stage, who] of Object.entries(by)) {
     const n = rc.filter((x) => x.stage === stage).length;
     if (n) parts.push(`${n} investigated and dropped by ${who}`);
   }
-  return `${parts.join("; ")}. Each drop and its reason is on the Runs page.`;
+  return `${parts.join("; ")}. Each drop and its reason is in the cockpit's Dropped tab.`;
 }
 
 export function publicRun(run: RunRecord): Omit<RunRecord, "signals"> {

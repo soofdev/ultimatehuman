@@ -40,6 +40,16 @@ export interface DroppedDraft {
   stage: "floor" | "root_cause" | "gate" | "adversarial" | "dedupe" | "rank";
   reason: string;
   title?: string;
+  usersAffected?: number;
+  at: string;
+}
+
+/** What a standing ruling did to a cluster in this run (applied before any agent spend). */
+export interface RuledEntry {
+  clusterId: string;
+  clusterTitle: string;
+  outcome: "suppressed" | "parked" | "resurfaced" | "escalated" | "already_filed" | "recurred_after_filing" | "awaiting_ruling";
+  note: string;
   at: string;
 }
 
@@ -69,6 +79,8 @@ export interface RunRecord {
   sources: SourceStat[];
   clusters: Cluster[];
   dropped: DroppedDraft[];
+  /** Clusters a standing ruling acted on in this run. */
+  ruled?: RuledEntry[];
   notes: string[];
   costUsd: number;
   /** Read-only repo checkout the agents could read for this run, if one was connected. */

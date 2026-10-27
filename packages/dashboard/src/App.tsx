@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
-import { Radar, Sparkles, Inbox, History, Gauge, FileCog, ShieldCheck } from "lucide-react";
+import { Radar, Sparkles, Inbox, History, Gauge, FileCog, ShieldCheck, CheckCircle2, X } from "lucide-react";
 import { get, setCsrf, redeemLoginFragment, connectEvents, ApiError } from "./api";
 import { time } from "./fmt";
 import { Setup } from "./pages/Setup";
-import { Findings } from "./pages/Findings";
+import { Cockpit } from "./pages/Cockpit";
 import { Runs } from "./pages/Runs";
 import { Usage } from "./pages/Usage";
 import { ConfigPage } from "./pages/Config";
 
-export type Page = "setup" | "findings" | "runs" | "usage" | "config";
+export type Page = "cockpit" | "setup" | "runs" | "usage" | "config";
 const PAGES: { id: Page; label: string; icon: typeof Radar }[] = [
-  { id: "setup", label: "Setup", icon: Sparkles },
-  { id: "findings", label: "Findings", icon: Inbox },
+  { id: "cockpit", label: "Cockpit", icon: Inbox },
   { id: "runs", label: "Runs", icon: History },
   { id: "usage", label: "Usage", icon: Gauge },
   { id: "config", label: "Config", icon: FileCog },
+  { id: "setup", label: "Setup", icon: Sparkles },
 ];
 
 export interface AppState {
@@ -22,18 +22,26 @@ export interface AppState {
   findings: any[];
   run: any;
   onboarding: any;
+  /** Bumped on every ruling event, so open views reload. */
+  rev: number;
+  /** Set when Setup handed over to the cockpit (shows the one-time welcome strip). */
+  landed: boolean;
   refresh: () => Promise<void>;
   go: (p: Page, sub?: string) => void;
 }
 
-function pageFromPath(): Page {
+/** "/" and the old "/findings" open the cockpit; Setup is home only until the first pass has finished. */
+function pageFromPath(): Page | null {
   const p = location.pathname.split("/")[1] as Page;
-  return PAGES.some((x) => x.id === p) ? p : "setup";
+  if ((p as string) === "findings") return "cockpit";
+  return PAGES.some((x) => x.id === p) ? p : null;
 }
 
 export function App() {
   const [auth, setAuth] = useState<"checking" | "ok" | "out" | string>("checking");
-  const [page, setPage] = useState<Page>(pageFromPath());
+  const [page, setPage] = useState<Page>(pageFromPath() ?? "cockpit");
+  const [rev, setRev] = useState(0);
+  const [landed, setLanded] = useState(false);
   const [status, setStatus] = useState<any>(null);
   const [findings, setFindings] = useState<any[]>([]);
   const [run, setRun] = useState<any>(null);
@@ -53,17 +61,22 @@ export function App() {
       if (location.pathname === "/login") {
         const r = await redeemLoginFragment();
         if (r !== "ok" && r !== "none") return setAuth(r);
-        history.replaceState(null, "", "/setup");
-        setPage("setup");
+        history.replaceState(null, "", "/");
       }
       try {
         await refresh();
+        if (!pageFromPath()) {
+          const runs = (await get("/api/runs")).runs as any[];
+          const home: Page = runs.some((r) => r.phase === "done") ? "cockpit" : "setup";
+          history.replaceState(null, "", `/${home}`);
+          setPage(home);
+        }
         setAuth("ok");
       } catch (e) {
         setAuth(e instanceof ApiError && e.status === 401 ? "out" : (e as Error).message);
       }
     })();
-    const onPop = () => setPage(pageFromPath());
+    const onPop = () => setPage(pageFromPath() ?? "cockpit");
     addEventListener("popstate", onPop);
     return () => removeEventListener("popstate", onPop);
   }, [refresh]);
@@ -76,18 +89,24 @@ export function App() {
       if (ev.type === "finding.updated") setFindings((f) => f.map((x) => (x.id === ev.finding.id ? ev.finding : x)));
       if (ev.type === "window.updated") setStatus((s: any) => (s ? { ...s, window: ev.window } : s));
       if (ev.type === "onboarding.updated") setOnboarding(ev.onboarding);
+      if (ev.type === "ruling") setRev((x) => x + 1);
     });
   }, [auth]);
 
   const go = (p: Page, sub?: string) => {
     history.pushState(null, "", `/${p}${sub ? `/${sub}` : ""}`);
     setPage(p);
+    if (p !== "cockpit") setLanded(false);
     scrollTo(0, 0);
+  };
+  const land = () => {
+    go("cockpit");
+    setLanded(true);
   };
 
   if (auth !== "ok") return <Login state={auth} />;
-  const state: AppState = { status, findings, run, onboarding, refresh, go };
-  const newCount = findings.filter((f) => f.status === "new").length;
+  const state: AppState = { status, findings, run, onboarding, rev, landed, refresh, go };
+  const newCount = status?.counts?.new ?? 0;
   const cur = PAGES.find((p) => p.id === page)!;
 
   return (
@@ -104,7 +123,7 @@ export function App() {
             <button key={p.id} aria-current={page === p.id} onClick={() => go(p.id)}>
               <p.icon size={16} strokeWidth={2} />
               {p.label}
-              {p.id === "findings" && newCount > 0 && <span className="count">{newCount}</span>}
+              {p.id === "cockpit" && newCount > 0 && <span className="count">{newCount}</span>}
             </button>
           ))}
         </nav>
@@ -122,8 +141,19 @@ export function App() {
           <WindowPill w={status?.window} />
         </header>
         <div className="content">
-          {page === "setup" && <Setup s={state} />}
-          {page === "findings" && <Findings s={state} />}
+          {page === "cockpit" && landed && (
+            <div className="landed fade-in">
+              <CheckCircle2 size={18} />
+              <span>
+                <b>Setup is complete.</b> This is your cockpit: everything the radar needs from you lands here. Setup stays in the sidebar.
+              </span>
+              <button className="btn ghost" aria-label="Close" onClick={() => setLanded(false)}>
+                <X size={15} />
+              </button>
+            </div>
+          )}
+          {page === "setup" && <Setup s={state} land={land} />}
+          {page === "cockpit" && <Cockpit s={state} />}
           {page === "runs" && <Runs s={state} />}
           {page === "usage" && <Usage s={state} />}
           {page === "config" && <ConfigPage />}

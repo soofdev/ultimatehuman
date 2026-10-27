@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, History, Radar, SearchCheck } from "lucide-react";
 import { post } from "../api";
 import type { AppState } from "../App";
@@ -8,7 +8,7 @@ import { timeS, dur } from "../fmt";
 
 const ORDER = ["claude", "posthog", "sentry", "github", "code"];
 
-export function Setup({ s }: { s: AppState }) {
+export function Setup({ s, land }: { s: AppState; land: () => void }) {
   const ob = s.onboarding;
   const run = s.run;
   const checks: any[] = ob?.checks ?? [];
@@ -20,6 +20,16 @@ export function Setup({ s }: { s: AppState }) {
   const wider = run && run.trigger !== "onboarding";
   const days = run ? Math.round(run.lookbackHours / 24) : 7;
   const [widening, setWidening] = useState(false);
+  // Setup ends on the cockpit: when a pass finishes while you watch, it hands over after a short beat.
+  const prevPhase = useRef(run?.phase);
+  useEffect(() => {
+    const was = prevPhase.current;
+    prevPhase.current = run?.phase;
+    if (was && was !== "done" && run?.phase === "done") {
+      const t = setTimeout(land, 2500);
+      return () => clearTimeout(t);
+    }
+  }, [run?.phase, land]);
   const widen = () => {
     setWidening(true);
     void post("/api/runs", { trigger: "run_now", lookbackHours: 720 }).then(() => s.refresh()).finally(() => setWidening(false));
@@ -88,11 +98,11 @@ export function Setup({ s }: { s: AppState }) {
               <b>First finding, {sinceInit !== null ? `${dur(sinceInit)} after you ran init` : "just now"}</b>
               <p>
                 {runFindings.length > 1 ? `${runFindings.length} findings so far. ` : ""}
-                {done ? "The pass is complete." : "The pass keeps going in the background; more land in Findings as they pass."}
+                {done ? "The pass is complete. Your cockpit is ready." : "The pass keeps going in the background; more land in your cockpit as they pass."}
               </p>
             </div>
-            <button className="btn" style={{ marginLeft: "auto" }} onClick={() => s.go("findings")}>
-              Open the feed <ArrowRight size={14} />
+            <button className="btn" style={{ marginLeft: "auto" }} onClick={land} data-action="open-cockpit">
+              Rule on it in the cockpit <ArrowRight size={14} />
             </button>
           </div>
           <FindingCard f={first} onChanged={s.refresh} />
@@ -104,11 +114,16 @@ export function Setup({ s }: { s: AppState }) {
           <SearchCheck size={28} color="var(--ok)" />
           <h3>No clear problems in the last {days} days</h3>
           <p>{run.emptyReason}</p>
-          {run.lookbackHours < 720 && (
-            <button className="btn primary" style={{ marginTop: 18 }} onClick={widen} disabled={widening}>
-              <History size={14} /> Look back 30 days
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 18 }}>
+            {run.lookbackHours < 720 && (
+              <button className="btn primary" onClick={widen} disabled={widening}>
+                <History size={14} /> Look back 30 days
+              </button>
+            )}
+            <button className="btn" onClick={land} data-action="open-cockpit">
+              Open the cockpit <ArrowRight size={14} />
             </button>
-          )}
+          </div>
         </section>
       )}
     </div>

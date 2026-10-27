@@ -20,7 +20,32 @@ const MIGRATIONS: string[] = [
    CREATE TABLE usage (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, source_id TEXT NOT NULL,
      kind TEXT NOT NULL, run_id TEXT, json TEXT NOT NULL);
    CREATE TABLE kv (key TEXT PRIMARY KEY, json TEXT NOT NULL);`,
+  // Rulings: the human's decisions, append-only. The latest row per cluster is the ruling in force;
+  // the full list is the card's history. "clear" withdraws the ruling, "resurfaced" is written by the engine.
+  `CREATE TABLE rulings (id INTEGER PRIMARY KEY AUTOINCREMENT, cluster_id TEXT NOT NULL, ruling TEXT NOT NULL,
+     reason TEXT, at TEXT NOT NULL, by TEXT NOT NULL, json TEXT NOT NULL);
+   CREATE INDEX rulings_cluster ON rulings(cluster_id, id);`,
 ];
+
+export type RulingKind = "file" | "dismiss" | "park" | "clear" | "resurfaced";
+
+export interface Ruling {
+  id: number;
+  clusterId: string;
+  ruling: RulingKind;
+  reason: string | null;
+  at: string;
+  /** "you" for a human ruling (single-user v1), "radar" for an engine event. */
+  by: "you" | "radar";
+  findingId?: string;
+  fingerprint?: string;
+  title?: string;
+  dryRun?: boolean;
+  /** Impact when the ruling was made: the baseline new evidence is measured against. */
+  usersAtRuling?: number;
+  lastSeenAtRuling?: string;
+  note?: string;
+}
 
 export class Store {
   readonly db: DatabaseSync;
@@ -94,6 +119,35 @@ export class Store {
       | undefined;
   }
 
+  addRuling(r: Omit<Ruling, "id" | "at"> & { at?: string }): Ruling {
+    const at = r.at ?? new Date().toISOString();
+    const { clusterId, ruling, reason, by, ...rest } = r;
+    const res = this.db
+      .prepare("INSERT INTO rulings(cluster_id,ruling,reason,at,by,json) VALUES(?,?,?,?,?,?)")
+      .run(clusterId, ruling, reason ?? null, at, by, JSON.stringify({ ...rest, at: undefined }));
+    return { ...r, id: Number(res.lastInsertRowid), at, reason: reason ?? null };
+  }
+
+  rulingHistory(clusterId: string): Ruling[] {
+    return (this.db.prepare("SELECT * FROM rulings WHERE cluster_id=? ORDER BY id").all(clusterId) as any[]).map(rowToRuling);
+  }
+
+  allRulings(): Ruling[] {
+    return (this.db.prepare("SELECT * FROM rulings ORDER BY id").all() as any[]).map(rowToRuling);
+  }
+
+  /** The ruling in force for a cluster: the latest human ruling, unless it was cleared or the radar resurfaced the item since. */
+  currentRuling(clusterId: string): Ruling | undefined {
+    const last = this.db.prepare("SELECT * FROM rulings WHERE cluster_id=? ORDER BY id DESC LIMIT 1").get(clusterId) as any;
+    if (!last) return undefined;
+    const r = rowToRuling(last);
+    return r.ruling === "clear" || r.ruling === "resurfaced" ? undefined : r;
+  }
+
+  removeDismissRule(fingerprint: string): void {
+    this.db.prepare("DELETE FROM dismiss_rules WHERE fingerprint=?").run(fingerprint);
+  }
+
   addUsage(sourceId: string, kind: string, runId: string | null, data: unknown): void {
     this.db.prepare("INSERT INTO usage(at,source_id,kind,run_id,json) VALUES(?,?,?,?,?)").run(new Date().toISOString(), sourceId, kind, runId, JSON.stringify(data));
   }
@@ -115,4 +169,8 @@ export class Store {
   setKv(key: string, value: unknown): void {
     this.db.prepare("INSERT OR REPLACE INTO kv(key,json) VALUES(?,?)").run(key, JSON.stringify(value));
   }
+}
+
+function rowToRuling(row: any): Ruling {
+  return { ...JSON.parse(row.json), id: row.id, clusterId: row.cluster_id, ruling: row.ruling, reason: row.reason, at: row.at, by: row.by };
 }

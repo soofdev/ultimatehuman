@@ -1,7 +1,7 @@
 import { watch } from "node:fs";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Plugin } from "@ultimatehuman/sdk";
+import type { Finding, Plugin } from "@ultimatehuman/sdk";
 import type { Config } from "./config/schema";
 import { configJsonSchema } from "./config/schema";
 import { loadConfig, loadRawConfig, defaultConfigPath, resolveSecretRefs, type SecretRefValue } from "./config/load";
@@ -11,6 +11,7 @@ import { WindowTracker } from "./governor/tracker";
 import { Radar, publicRun } from "./radar/engine";
 import { renderIssue } from "./radar/issue";
 import { startServer, type RunningServer } from "./server/http";
+import { buildCockpit, backfillFindingClusters } from "./cockpit";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -38,6 +39,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const logFile = join(home, "logs", "daemon.log");
   const log = (m: string) => appendFileSync(logFile, `${new Date().toISOString()} ${m}\n`);
   const store = new Store(home);
+  const backfilled = backfillFindingClusters(store);
+  if (backfilled) log(`linked ${backfilled} older finding${backfilled === 1 ? "" : "s"} to ${backfilled === 1 ? "its" : "their"} cluster`);
   const src = config.auth.sources[0]!;
   const tracker = new WindowTracker(store, src.id, src.kind === "anthropic_api_key" ? "api_key" : "subscription", config.governor.humanReservePct);
 
@@ -78,6 +81,53 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     return { f, issue: renderIssue(f, labels), repo, dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true };
   };
 
+  /** Records a ruling on a cluster (finding or dropped draft) and keeps the finding and the fingerprint rule in step. */
+  const rule = (clusterId: string, ruling: "file" | "dismiss" | "park" | "clear", reason: string | null, extra: Record<string, unknown> = {}) => {
+    const f = store.listFindings().find((x: any) => x.clusterId === clusterId) as (Finding & Record<string, any>) | undefined;
+    let users: number | undefined = f?.impact.usersAffected;
+    let title = f?.title;
+    if (!f) {
+      for (const run of store.listRuns(30)) {
+        const d = run.dropped?.find((x) => x.clusterId === clusterId);
+        if (d) {
+          users = d.usersAffected ?? Number(/^(\d+) user/.exec(d.reason)?.[1] ?? 0);
+          title = d.title ?? d.clusterTitle;
+          break;
+        }
+      }
+    }
+    const prev = store.currentRuling(clusterId);
+    const r = store.addRuling({
+      clusterId,
+      ruling,
+      reason,
+      by: "you",
+      ...(f ? { findingId: f.id, fingerprint: f.dedupe.fingerprint, lastSeenAtRuling: f.impact.lastSeen } : {}),
+      ...(users !== undefined ? { usersAtRuling: users } : {}),
+      ...(title ? { title } : {}),
+      ...extra,
+    });
+    if (f) {
+      if (ruling === "dismiss") {
+        f.status = "dismissed";
+        f.dismissReason = reason;
+        store.addDismissRule(f.dedupe.fingerprint, reason!);
+      } else if (f.status === "dismissed" || f.status === "filed") {
+        f.status = ruling === "file" && !extra.dryRun ? "filed" : "new";
+        if (prev?.ruling === "dismiss") store.removeDismissRule(f.dedupe.fingerprint);
+      }
+      store.saveFinding(f);
+      emit({ type: "finding.updated", finding: f });
+    }
+    emit({ type: "ruling", ruling: r });
+    log(`ruling: ${ruling} on ${clusterId}${reason ? ` (${reason})` : ""}`);
+    return r;
+  };
+  const dryRunOutput = () => {
+    const o = output();
+    return { dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true, repo: o ? String(config.plugins[o.manifest.id]?.credentials?.repo ?? "") : "" };
+  };
+
   server = await startServer({
     host: config.server.host,
     port: config.server.port,
@@ -91,7 +141,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           window: tracker.status(),
           lastRun: radar.current() ? publicRun(radar.current()!) : store.listRuns(1)[0] ?? null,
           plugins: opts.plugins.map((p) => ({ id: p.manifest.id, displayName: p.manifest.displayName, kind: p.manifest.kind, configured: !!config.plugins[p.manifest.id] })),
-          counts: { new: store.listFindings().filter((f) => f.status === "new").length },
+          counts: { new: buildCockpit(store, radar.current(), dryRunOutput()).counts.new },
         },
       }),
       "GET /api/onboarding": async () => ({ json: store.getKv("onboarding") ?? null }),
@@ -128,7 +178,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         (x.f as any).dryRunPreview = rec;
         store.saveFinding(x.f);
         log(`dry run: would create issue in ${x.repo}: ${x.issue.title}`);
-        emit({ type: "finding.updated", finding: x.f });
+        const cid = (x.f as any).clusterId as string | undefined;
+        if (cid) rule(cid, "file", null, { dryRun: x.dryRun, ref: filed.ref, repo: x.repo });
+        else emit({ type: "finding.updated", finding: x.f });
         return { json: { dryRun: true, message: `dry run - would create issue in ${x.repo}`, issue: x.issue, repo: x.repo } };
       },
       "POST /api/findings/:id/dismiss": async (_r, body, p) => {
@@ -136,12 +188,28 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         const reason = String(body.reason ?? "").trim();
         if (!f) return { status: 404, json: { error: "no such finding" } };
         if (!reason) return { status: 400, json: { error: "a one-line reason is required" } };
-        f.status = "dismissed";
-        (f as any).dismissReason = reason;
-        store.saveFinding(f);
-        store.addDismissRule(f.dedupe.fingerprint, reason);
-        emit({ type: "finding.updated", finding: f });
+        const cid = (f as any).clusterId as string | undefined;
+        if (cid) rule(cid, "dismiss", reason);
+        else {
+          f.status = "dismissed";
+          (f as any).dismissReason = reason;
+          store.saveFinding(f);
+          store.addDismissRule(f.dedupe.fingerprint, reason);
+          emit({ type: "finding.updated", finding: f });
+        }
         return { json: { ok: true } };
+      },
+      "GET /api/cockpit": async () => ({ json: buildCockpit(store, radar.current(), dryRunOutput()) }),
+      "POST /api/rulings": async (_r, body) => {
+        const clusterId = String(body.clusterId ?? "");
+        const ruling = String(body.ruling ?? "");
+        const reason = String(body.reason ?? "").trim();
+        if (!/^c_[0-9a-f]{8}$/.test(clusterId)) return { status: 400, json: { error: "unknown item" } };
+        if (!["dismiss", "park", "clear"].includes(ruling)) return { status: 400, json: { error: "ruling must be dismiss, park or clear (file goes through File to GitHub)" } };
+        if (ruling === "dismiss" && !reason) return { status: 400, json: { error: "a one-line reason is required" } };
+        if (reason.length > 500) return { status: 400, json: { error: "keep the reason under 500 characters" } };
+        const r = rule(clusterId, ruling as "dismiss" | "park" | "clear", reason || null);
+        return { json: { ok: true, ruling: r } };
       },
       "GET /api/usage": async () => ({
         json: {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronUp, ExternalLink, Users, TrendingUp, Crosshair, ShieldCheck, CircleHelp, EyeOff, X, CheckCircle2, FlaskConical, Repeat } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, Users, TrendingUp, Crosshair, ShieldCheck, CircleHelp, EyeOff, X, CheckCircle2, FlaskConical, Repeat, Undo2 } from "lucide-react";
 import { get, post } from "./api";
 
 function Github({ size = 14 }: { size?: number }) {
@@ -12,12 +12,15 @@ function Github({ size = 14 }: { size?: number }) {
 }
 import { Markdown } from "./Markdown";
 import { day, dayTime, plural } from "./fmt";
+import { RulingBox, RulingActions, History, type RulingMode } from "./Ruling";
 
 const TREND: Record<string, string> = { new: "New", rising: "Rising", steady: "Steady", falling: "Falling" };
 const KIND: Record<string, string> = { recording: "Session replay", event_series: "Event data", error_group: "Error group", funnel: "Funnel" };
 
-export function FindingCard({ f, defaultOpen = false, onChanged }: { f: any; defaultOpen?: boolean; onChanged?: () => void }) {
+/** With `card` (the cockpit), the footer carries the rulings and the history; without it (Setup), the legacy actions. */
+export function FindingCard({ f, card, defaultOpen = false, onChanged }: { f: any; card?: any; defaultOpen?: boolean; onChanged?: () => void }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [mode, setMode] = useState<RulingMode>("idle");
   const [preview, setPreview] = useState<any>(null);
   const [dismissing, setDismissing] = useState(false);
   const [reason, setReason] = useState("");
@@ -34,7 +37,7 @@ export function FindingCard({ f, defaultOpen = false, onChanged }: { f: any; def
   };
 
   return (
-    <article className={`fcard fade-in ${open ? "open" : ""}`} data-finding={f.id}>
+    <article className={`fcard fade-in sev-${f.severity} ${open ? "open" : ""} ${card?.ruling ? `ruled-${card.ruling.ruling}` : ""}`} data-finding={f.id} data-cluster={card?.clusterId}>
       <div className="fcard-top" onClick={() => setOpen(!open)}>
         <div className="fmeta">
           <span className={`sev ${f.severity}`}>{f.severity}</span>
@@ -49,7 +52,12 @@ export function FindingCard({ f, defaultOpen = false, onChanged }: { f: any; def
               <Repeat size={12} /> Recurred
             </span>
           )}
-          {f.status === "dismissed" && <span className="chip">Dismissed</span>}
+          {card?.resurfaced && (
+            <span className="chip back" title={card.resurfaced.note}>
+              <Undo2 size={12} /> Back: {card.resurfaced.note ?? "new evidence"}
+            </span>
+          )}
+          {!card && f.status === "dismissed" && <span className="chip">Dismissed</span>}
           <span style={{ marginLeft: "auto", color: "var(--ink-4)" }}>{open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</span>
         </div>
         <div className="fbody">
@@ -197,43 +205,74 @@ export function FindingCard({ f, defaultOpen = false, onChanged }: { f: any; def
         </div>
       )}
 
-      {dismissing ? (
-        <div className="dismiss">
-          <input autoFocus placeholder="One line: why is this not worth fixing? (suppresses this fingerprint)" value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === "Enter" && dismiss()} />
-          <button className="btn" disabled={!reason.trim()} onClick={dismiss}>
-            Dismiss
-          </button>
-          <button className="btn ghost" onClick={() => setDismissing(false)}>
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div className="ffoot">
-          <div className="left">
-            <span>
-              <Users size={13} /> {users} people
-            </span>
-            <span>
-              First seen {day(f.impact.firstSeen)} · last {dayTime(f.impact.lastSeen)}
-            </span>
-            {f.dryRunPreview && (
-              <span style={{ color: "var(--ok)" }}>
-                <CheckCircle2 size={13} /> Previewed for {f.dryRunPreview.repo}
+      {card ? (
+        <div className="rfoot">
+          <div className="rfoot-row">
+            <div className="rfoot-meta">
+              <span>
+                <Users size={13} /> {plural(users ?? 0, "person", "people")}
               </span>
+              <span>
+                First seen {day(f.impact.firstSeen)} · last {dayTime(f.impact.lastSeen)}
+              </span>
+            </div>
+            {(!card.ruling || mode === "changing") && mode !== "dismissing" && (
+              <RulingActions
+                card={card}
+                mode={mode}
+                setMode={setMode}
+                onRuled={() => onChanged?.()}
+                primary={
+                  card.ruling?.ruling !== "file" && (
+                    <button className="btn primary" onClick={openPreview} data-action="file">
+                      <Github size={14} /> File to GitHub
+                    </button>
+                  )
+                }
+              />
             )}
           </div>
-          <div className="btns">
-            {f.status !== "dismissed" && (
-              <button className="btn ghost" onClick={() => setDismissing(true)}>
-                <EyeOff size={14} /> Dismiss
-              </button>
-            )}
-            <button className="btn primary" onClick={openPreview} data-action="file">
-              <Github size={14} /> File to GitHub
+          {card.ruling && mode === "idle" && <RulingBox card={card} onChange={() => setMode("changing")} />}
+          {mode === "dismissing" && <RulingActions card={card} mode={mode} setMode={setMode} onRuled={() => onChanged?.()} />}
+          <History items={card.history} />
+        </div>
+      ) : dismissing ? (
+          <div className="dismiss">
+            <input autoFocus placeholder="One line: why is this not worth fixing? (suppresses this fingerprint)" value={reason} onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => e.key === "Enter" && dismiss()} />
+            <button className="btn" disabled={!reason.trim()} onClick={dismiss}>
+              Dismiss
+            </button>
+            <button className="btn ghost" onClick={() => setDismissing(false)}>
+              Cancel
             </button>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="ffoot">
+            <div className="left">
+              <span>
+                <Users size={13} /> {users} people
+              </span>
+              <span>
+                First seen {day(f.impact.firstSeen)} · last {dayTime(f.impact.lastSeen)}
+              </span>
+              {f.dryRunPreview && (
+                <span style={{ color: "var(--ok)" }}>
+                  <CheckCircle2 size={13} /> Previewed for {f.dryRunPreview.repo}
+                </span>
+              )}
+            </div>
+            <div className="btns">
+              {f.status !== "dismissed" && (
+                <button className="btn ghost" onClick={() => setDismissing(true)}>
+                  <EyeOff size={14} /> Dismiss
+                </button>
+              )}
+              <button className="btn primary" onClick={openPreview} data-action="file">
+                <Github size={14} /> File to GitHub
+              </button>
+            </div>
+          </div>
+        )}
       {preview && createPortal(<IssueModal p={preview} onClose={() => setPreview(null)} onDone={onChanged} />, document.body)}
     </article>
   );
@@ -263,7 +302,7 @@ function IssueModal({ p, onClose, onDone }: { p: any; onClose: () => void; onDon
           <div className="dry done">
             <CheckCircle2 size={16} />
             <span>
-              <b>{result.message}.</b> Nothing was sent to GitHub. Connect a fine-grained token to file for real.
+              <b>{result.message}.</b> Nothing was sent to GitHub. Your ruling is saved on the card; connect a fine-grained token to file for real.
             </span>
           </div>
         ) : (

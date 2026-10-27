@@ -284,6 +284,17 @@ Source of truth: `packages/sdk/src/finding.ts`.
 - **Fingerprint:** `<area>.<component>|<failure-mode>`, a stable slug of the root cause rather than the symptom. Two symptoms of one cause share a fingerprint.
 - **Redaction:** emails, names, IPs and tokens in excerpts are masked before an excerpt is stored or rendered. User ids are hashed per install.
 
+## 7b. Editable pipeline instructions ("Teach your radar" — Vincent, 2026-10-27)
+
+The radar's behavior-defining instructions (collector checklists, admission rules, gate verdict policy, scope inclusions/exclusions, product-bar notes) are **data, not code**: versioned markdown files in the user's home (`instructions/`), hot-loaded per run, shown with full history.
+
+1. **User-editable in the cockpit.** Config → Instructions: edit any brief with a diff view; every save is a version with a note. A bad edit is one revert away. The run detail names the instruction version it ran with.
+2. **Agent-editable by proposal, never silently.** The in-product agent can PROPOSE amendments — from run retrospectives (misses, starved queues, drops that later proved real) or from chat feedback. A proposal is a cockpit card: the diff, the motivating evidence (which finding/run exposed the gap), and the expected effect. Applying it is a ruling; it never self-applies.
+3. **Prompt-budget discipline.** Every added line must cite the concrete miss that pays for it (the card template enforces: "evidence → line added"). Instructions bloat is a first-class failure mode; the proposal card shows current instruction token size and the delta.
+4. **Structural safety rails stay in code.** Users edit judgment (what counts, what to include, verdict vocabulary); they cannot edit away read-only enforcement, scope verification, caps, or the evidence-citation requirement.
+
+Example card this enables (real case from the reference deployment): "Gate verdicts HOLDS/PARTLY/BROKEN discard real symptoms with contested mechanisms → add verdict 'symptom real, mechanism contested = file as minor investigation'. Evidence: share-consent class dropped N times." One tap to apply, versioned, revertible.
+
 ## 8. Dashboard and API
 
 ### 8.0 The dashboard IS a cockpit (HARD requirement — Vincent, 2026-10-27)
