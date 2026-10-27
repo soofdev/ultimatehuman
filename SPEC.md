@@ -286,6 +286,15 @@ Source of truth: `packages/sdk/src/finding.ts`.
 
 ## 8. Dashboard and API
 
+### 8.0 The dashboard IS a cockpit (HARD requirement — Vincent, 2026-10-27)
+
+The product's interface identity is a **decision cockpit**, not an analytics dashboard. Reference implementation for the interaction grammar and polish bar: the private pipeline's claims cockpit (build legs: read `magify_next` `/administration/claims` as design reference — the public repo and docs never mention it). Non-negotiables:
+
+1. **One surface, card-based.** Everything the radar wants from the human arrives as a card in one feed: findings to rule on, drafts it dropped (inspectable), decisions it needs, run outcomes. No hunting across pages to "manage" the radar; the pages (Runs/Usage/Config) are drill-downs, the cockpit is home.
+2. **Rulings are ground truth.** Every card offers explicit rulings — v1: **File** (= confirm, creates the issue), **Dismiss with reason** (= wrong, becomes a suppression rule), **Not now** (parks). Rulings are stored, shown on the card's history, and OVERRIDE future runs: a dismissed fingerprint never resurfaces without new evidence, a confirmed one tracks recurrence. v2 adds fix-pipeline rulings (approve fix, exam verdicts) to the same feed — same grammar, more card types.
+3. **The radar asks, the human rules, nothing proceeds silently.** Any card type that implies action defaults to waiting for a ruling (autoFile stays off until explicitly enabled).
+4. **Sexy is a requirement, not a nice-to-have.** The cockpit is the screenshot people share; it gets the design budget. Card anatomy, severity accents, evidence chips and ruling buttons follow the claims-page bar; reference-tier polish (Typefully/Buffer).
+
 - **Serving:** the daemon serves the SPA and the API on `127.0.0.1:4747`, same origin.
 - **Auth:**
   - `ultimatehuman dashboard` prints `http://127.0.0.1:4747/login#code=<single-use>`, valid for 10 minutes.
