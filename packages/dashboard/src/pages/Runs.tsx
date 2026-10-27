@@ -18,7 +18,7 @@ const OUTCOME: Record<string, string> = {
 
 function passLabel(r: any): string {
   const span = r.lookbackHours % 24 === 0 ? `${r.lookbackHours / 24}-day` : `${r.lookbackHours}-hour`;
-  return r.trigger === "onboarding" ? `First pass (${span})` : r.trigger === "schedule" ? `Daily ${span} pass` : `${span[0].toUpperCase()}${span.slice(1)} pass`;
+  return r.trigger === "onboarding" ? `First pass (${span})` : r.trigger === "schedule" ? `Daily ${span} pass` : `${span.charAt(0).toUpperCase()}${span.slice(1)} pass`;
 }
 
 export function Runs({ s }: { s: AppState }) {

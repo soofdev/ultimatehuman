@@ -64,7 +64,7 @@ Each leg is a self-contained unit of work with its own acceptance criteria. Legs
 
 **Scope:**
 - **Setup page:** onboarding (detect → probe checklist → missing-only fields with help links → live first pass over WS).
-- **Findings page:** feed (cards, evidence, File to GitHub with preview, Dismiss with reason).
+- **Cockpit (home):** one card feed (findings, dropped drafts, pass outcomes, decisions) with rulings File / Dismiss with reason / Not now, enforced by the engine on later passes.
 - **Runs page:** with dropped drafts.
 - **Usage page:** meter.
 - **Config page:** form generated from JSON Schema, secrets as ref pickers, doctor results.

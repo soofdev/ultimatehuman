@@ -321,13 +321,14 @@ The product's interface identity is a **decision cockpit**, not an analytics das
    - Auto-detects Claude auth and tracker keys from the environment, as a checklist with live probes ("✓ Sentry: found 37 unresolved issues in 2 projects").
    - Asks only for what is missing; each missing field links to its exact `helpUrl`.
    - Starts the first pass the moment one source plus auth are green, with a live phase timeline over WS.
-   - Ends on the first finding or on the honest empty result.
-2. **Findings:**
-   - A feed of finding cards with severity, users affected, trend, and plain-words title.
-   - Expanding a card shows the evidence links, root-cause chain, and "Not established".
-   - Actions: **File to GitHub** (with a preview of the issue body), **Dismiss** (reason required).
-   - Badges: recurred, covered by #N, regression of #N.
-   - Tabs: New / Filed / Dismissed.
+   - Ends on the first finding or on the honest empty result, then hands over to the cockpit (the home page from then on).
+2. **Cockpit (home):**
+   - One card feed: findings to rule on, dropped drafts (collapsed, opening on why they were dropped), decision cards (failed or parked pass), and one line per pass ("30-day pass · 1 finding · 6 dropped · $1.42").
+   - Finding cards: severity accent, users affected, trend, plain-words title; expanding shows the evidence links, root-cause chain, and "Not established". Badges: recurred, back on new evidence.
+   - Rulings: **File to GitHub** (preview of the issue body; in dry run the ruling is still recorded), **Dismiss** (reason required, becomes a suppression rule), **Not now** (parks). Dropped drafts take Dismiss and Not now.
+   - Each card shows the ruling in force (what, when, its effect on later passes, a Change link to re-rule or withdraw) and its history: found or dropped, every ruling, and what each later pass did because of it.
+   - Tabs: New / Ruled / Parked / Dropped drafts. A card just ruled stays in place until the tab changes.
+   - **Enforcement** (engine, before any agent step, keyed by cluster id): dismissed = skipped ("suppressed by ruling" in the run notes) unless the impact escalates to at least twice the people (and 2 more) than at dismissal; parked = skipped until a pass sees an occurrence after the ruling, then it resurfaces; filed = skipped unless it occurs again after filing (then re-investigated as a recurrence); an unruled finding already in the feed is not re-investigated, new occurrences refresh its impact numbers. Rulings live in `state.db` (`rulings`, append-only; the latest row per cluster is the ruling in force).
 3. **Runs:** history, phase timeline, signals per source, dropped drafts with their reasons, the parked state, and a "Run now" button.
 4. **Usage:** the window meter per auth source, reserve line, reset time, queued steps, today's API spend against the cap, and spend per run.
 5. **Config:** a form generated from the JSON Schema. Secrets show as ref pickers (env var name), never as values. Also shows `doctor` results with one-click fixes.
@@ -340,9 +341,10 @@ GET  /api/status                      GET  /api/onboarding/detect
 POST /api/plugins/:id/probe           GET|PATCH /api/config    GET /api/doctor
 GET|POST /api/runs                    GET /api/findings        GET /api/findings/:id
 POST /api/findings/:id/file           POST /api/findings/:id/dismiss
+GET  /api/cockpit                     POST /api/rulings
 ```
 
-**WS** `/api/events` (cookie-authenticated) carries `run.phase`, `finding.new`, `finding.updated`, `window.updated` and `probe.result`.
+**WS** `/api/events` (cookie-authenticated) carries `run.phase`, `finding.new`, `finding.updated`, `ruling`, `window.updated` and `probe.result`.
 
 **CSRF:** all mutating routes require the `SameSite=Strict` cookie plus an `x-uh-csrf` header echoed from `/api/status`.
 

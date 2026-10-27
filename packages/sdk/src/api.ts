@@ -68,6 +68,10 @@ export interface ApiRoutes {
   "GET /api/findings/:id": { res: { finding: Finding; issuePreview: { title: string; body: string } } };
   "POST /api/findings/:id/file": { res: { issue: { ref: string; url: string } } };
   "POST /api/findings/:id/dismiss": { req: { reason: string }; res: { ok: true } };
+  /** The cockpit feed: finding and dropped-draft cards (with ruling + history), pass outcomes, decision cards, tab counts. */
+  "GET /api/cockpit": { res: { cards: unknown[]; runs: unknown[]; decisions: unknown[]; counts: { new: number; ruled: number; parked: number; dropped: number } } };
+  /** Rule on a cluster (finding or dropped draft). File goes through /api/findings/:id/file. */
+  "POST /api/rulings": { req: { clusterId: string; ruling: "dismiss" | "park" | "clear"; reason?: string }; res: { ok: true } };
   "GET /api/doctor": { res: { checks: DoctorCheck[] } };
 }
 
@@ -83,5 +87,6 @@ export type ServerEvent =
   | { type: "run.phase"; run: RunSummary }
   | { type: "finding.new"; finding: Finding }
   | { type: "finding.updated"; finding: Finding }
+  | { type: "ruling"; ruling: { clusterId: string; ruling: string; at: string } }
   | { type: "window.updated"; window: WindowStatus }
   | { type: "probe.result"; pluginId: string; result: ProbeResult };
