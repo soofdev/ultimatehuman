@@ -185,14 +185,21 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
         return 2;
       }
       projectId = flags.project;
-    } else if (projects.length > 1 && !flags.nonInteractive) {
-      console.log("");
-      const i = await choose(
-        "Which PostHog project should the radar watch?",
-        projects.map((x) => `${x.name} ${c.muted(`(${x.id}) · ${x.events7d.toLocaleString("en-US")} events in 7 days`)}`),
-        0,
-      );
-      projectId = String(projects[i]!.id);
+    } else if (projects.length > 1) {
+      // Inside a checkout, the project named like the repo is the likely answer ("Jalsa app" for .../jalsa).
+      const slug = (process.env.ULTIMATEHUMAN_GITHUB_REPO ?? gitRemoteRepo())?.split("/")[1]?.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const match = slug ? projects.findIndex((x) => x.name.toLowerCase().replace(/[^a-z0-9]/g, "").includes(slug)) : -1;
+      const def = match >= 0 ? match : Math.max(0, projects.findIndex((x) => String(x.id) === projectId));
+      if (flags.nonInteractive) projectId = String(projects[def]!.id);
+      else {
+        console.log("");
+        const i = await choose(
+          `Which PostHog project should the radar watch?${match >= 0 ? c.muted(" (preselected: its name matches this repo)") : ""}`,
+          projects.map((x) => `${x.name} ${c.muted(`(${x.id}) · ${x.events7d.toLocaleString("en-US")} events in 7 days`)}`),
+          def,
+        );
+        projectId = String(projects[i]!.id);
+      }
     }
     const chosen = projects.find((x) => String(x.id) === projectId);
     if (chosen && projects.length > 1) {
