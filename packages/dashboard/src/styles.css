@@ -27,14 +27,21 @@
   --shadow: 0 1px 2px rgba(23, 23, 26, 0.04), 0 1px 1px rgba(23, 23, 26, 0.02);
   --shadow-lg: 0 12px 32px -12px rgba(23, 23, 26, 0.18), 0 2px 6px rgba(23, 23, 26, 0.05);
   --mono: "JetBrains Mono Variable", ui-monospace, monospace;
+}
+/* The cockpit and the shell run on the ported claims UI (Tailwind, see
+   src/ported). Every other page keeps this stylesheet's look inside .legacy. */
+.legacy, .login {
   font-family: "Inter Variable", system-ui, sans-serif;
   font-feature-settings: "cv11", "ss01", "ss03";
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
 }
+.legacy { min-height: 100%; }
 * { box-sizing: border-box; }
-body { margin: 0; font-size: 14px; line-height: 1.5; }
+body { margin: 0; }
 a { color: inherit; }
 button { font: inherit; cursor: pointer; }
 code, .mono { font-family: var(--mono); font-size: 12.5px; }
@@ -416,3 +423,18 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .hist .hist-more { display: block; }
 .hist .hist-more .linkbtn { margin-left: 26px; font-size: 12px; }
 .hist .h-checked .hist-dot { background: #eeedf9; color: var(--accent); }
+
+/* Tailwind's preflight (loaded for the ported cockpit) zeroes browser
+   defaults this stylesheet was written against. Put them back for the legacy
+   pages at zero specificity, so every class rule above still wins. */
+:where(.legacy, .login, .md) p { margin: 1em 0; }
+:where(.legacy, .login, .md) h1 { font-size: 2em; font-weight: bold; margin: 0.67em 0; }
+:where(.legacy, .login, .md) h2 { font-size: 1.5em; font-weight: bold; margin: 0.83em 0; }
+:where(.legacy, .login, .md) h3 { font-size: 1.17em; font-weight: bold; margin: 1em 0; }
+:where(.legacy, .login, .md) h4 { font-weight: bold; margin: 1.33em 0; }
+:where(.legacy, .login, .md) :is(ul, ol) { margin: 1em 0; padding-left: 40px; }
+:where(.legacy, .login, .md) ul { list-style: disc; }
+:where(.legacy, .login, .md) ol { list-style: decimal; }
+:where(.legacy, .login, .md) b, :where(.legacy, .login, .md) strong { font-weight: bolder; }
+:where(.legacy, .login, .md) :is(svg, img, video, canvas) { display: inline; vertical-align: baseline; }
+:where(.legacy, .login, .md) img { max-width: none; height: auto; }

@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
-import { Radar, Sparkles, Inbox, History, Gauge, FileCog, ShieldCheck, CheckCircle2, X } from "lucide-react";
+import { Radar, CheckCircle2, X } from "lucide-react";
 import { get, setCsrf, redeemLoginFragment, connectEvents, ApiError } from "./api";
 import { time } from "./fmt";
 import { Setup } from "./pages/Setup";
-import { Cockpit } from "./pages/Cockpit";
+import CockpitClient from "./ported/CockpitClient";
+import AdminSidebar from "./ported/AdminSidebar";
 import { Runs } from "./pages/Runs";
 import { Usage } from "./pages/Usage";
 import { ConfigPage } from "./pages/Config";
 
 export type Page = "cockpit" | "setup" | "runs" | "usage" | "config";
-const PAGES: { id: Page; label: string; icon: typeof Radar }[] = [
-  { id: "cockpit", label: "Cockpit", icon: Inbox },
-  { id: "runs", label: "Runs", icon: History },
-  { id: "usage", label: "Usage", icon: Gauge },
-  { id: "config", label: "Config", icon: FileCog },
-  { id: "setup", label: "Setup", icon: Sparkles },
+const PAGES: { id: Page; label: string }[] = [
+  { id: "cockpit", label: "Cockpit" },
+  { id: "runs", label: "Runs" },
+  { id: "usage", label: "Usage" },
+  { id: "config", label: "Config" },
+  { id: "setup", label: "Setup" },
 ];
 
 export interface AppState {
@@ -97,7 +98,7 @@ export function App() {
     history.pushState(null, "", `/${p}${sub ? `/${sub}` : ""}`);
     setPage(p);
     if (p !== "cockpit") setLanded(false);
-    scrollTo(0, 0);
+    document.querySelector("main")?.scrollTo(0, 0);
   };
   const land = () => {
     go("cockpit");
@@ -106,59 +107,57 @@ export function App() {
 
   if (auth !== "ok") return <Login state={auth} />;
   const state: AppState = { status, findings, run, onboarding, rev, landed, refresh, go };
-  const newCount = status?.counts?.new ?? 0;
   const cur = PAGES.find((p) => p.id === page)!;
+  const sources = status?.plugins?.filter((p: any) => p.configured && p.kind === "source").map((p: any) => p.displayName).join(", ");
 
+  // The shell is the ported admin layout (see src/ported/PROVENANCE.md); pages other than the cockpit keep their own look inside .legacy.
   return (
-    <div className="shell">
-      <aside className="side">
-        <div className="brand">
-          <div className="brand-mark">
-            <Radar size={15} color="white" strokeWidth={2.4} />
-          </div>
-          ultimatehuman
-        </div>
-        <nav className="nav">
-          {PAGES.map((p) => (
-            <button key={p.id} aria-current={page === p.id} onClick={() => go(p.id)}>
-              <p.icon size={16} strokeWidth={2} />
-              {p.label}
-              {p.id === "cockpit" && newCount > 0 && <span className="count">{newCount}</span>}
-            </button>
-          ))}
-        </nav>
-        <div className="side-foot">
-          <ShieldCheck size={14} style={{ verticalAlign: -2, marginRight: 4 }} />
-          <b>Read-only.</b> Your trackers are only read. Issues are previewed (dry run) until you connect a GitHub token.
-        </div>
-      </aside>
-      <div className="main">
-        <header className="topbar">
-          <div className="crumb">
-            {cur.label}
-            <span> · {status?.plugins?.filter((p: any) => p.configured && p.kind === "source").map((p: any) => p.displayName).join(", ")}</span>
-          </div>
-          <WindowPill w={status?.window} />
-        </header>
-        <div className="content">
-          {page === "cockpit" && landed && (
-            <div className="landed fade-in">
-              <CheckCircle2 size={18} />
-              <span>
-                <b>Setup is complete.</b> This is your cockpit: everything the radar needs from you lands here. Setup stays in the sidebar.
-              </span>
-              <button className="btn ghost" aria-label="Close" onClick={() => setLanded(false)}>
-                <X size={15} />
-              </button>
+    <div data-shell className="flex h-screen bg-gray-100">
+      <AdminSidebar
+        page={page}
+        onNavigate={(p: Page) => go(p)}
+        footer={
+          <p className="px-4 pb-4 pt-3 text-xs leading-snug text-gray-500">
+            <span className="font-semibold text-gray-700">Read-only.</span> Your trackers are only read. Issues are previewed (dry run) until you connect a GitHub token.
+          </p>
+        }
+      />
+      <main className="flex-1 overflow-x-hidden overflow-y-auto bg-white">
+        {page === "cockpit" ? (
+          <>
+            {landed && (
+              <div className="bg-gray-50 px-4 pt-16 sm:px-8 md:pt-6">
+                <div data-landed className="flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900">
+                  <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600" />
+                  <p className="min-w-0 flex-1">
+                    <span className="font-semibold">Setup is complete.</span> This is your cockpit: everything the radar needs from you lands here. Setup stays in the sidebar.
+                  </p>
+                  <button type="button" aria-label="Close" onClick={() => setLanded(false)} className="shrink-0 opacity-70 hover:opacity-100">
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
+            )}
+            <CockpitClient s={state} />
+          </>
+        ) : (
+          <div className="legacy">
+            <header className="topbar">
+              <div className="crumb">
+                {cur.label}
+                {sources && <span> · {sources}</span>}
+              </div>
+              <WindowPill w={status?.window} />
+            </header>
+            <div className="content">
+              {page === "setup" && <Setup s={state} land={land} />}
+              {page === "runs" && <Runs s={state} />}
+              {page === "usage" && <Usage s={state} />}
+              {page === "config" && <ConfigPage />}
             </div>
-          )}
-          {page === "setup" && <Setup s={state} land={land} />}
-          {page === "cockpit" && <Cockpit s={state} />}
-          {page === "runs" && <Runs s={state} />}
-          {page === "usage" && <Usage s={state} />}
-          {page === "config" && <ConfigPage />}
-        </div>
-      </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
