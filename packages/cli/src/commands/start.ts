@@ -13,7 +13,7 @@ export function dashboardDir(): string | null {
   return null;
 }
 
-/** Foreground engine. `init` spawns this detached; `service install` (not in this slice) would point a unit at it. */
+/** Foreground engine. `init` spawns this detached; `service install` points a launchd/systemd unit at it. */
 export async function start(_flags: GlobalFlags): Promise<number> {
   const d = await startDaemon({ plugins: bundledPlugins, staticDir: dashboardDir(), version: VERSION });
   const stop = async () => {

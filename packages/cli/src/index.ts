@@ -5,6 +5,7 @@ import { start } from "./commands/start";
 import { doctor } from "./commands/doctor";
 import { configCmd } from "./commands/config";
 import { dashboard } from "./commands/dashboard";
+import { service, serviceInstalled } from "./commands/service";
 
 const USAGE = `ultimatehuman <command>
 
@@ -53,6 +54,10 @@ async function main(argv: string[]): Promise<number> {
     case "dashboard":
       return dashboard();
     case "stop": {
+      if (serviceInstalled()) {
+        console.log("the engine runs as a service (it would restart); use `ultimatehuman service uninstall` to stop it");
+        return 1;
+      }
       const { readFileSync } = await import("node:fs");
       const { join } = await import("node:path");
       const { uhHome } = await import("@ultimatehuman/core");
@@ -67,8 +72,7 @@ async function main(argv: string[]): Promise<number> {
       }
     }
     case "service":
-      console.log(`${command} is a stub in this skeleton.`);
-      return 0;
+      return service(positionals[0], flags);
     case undefined:
     case "help":
     case "--help":
