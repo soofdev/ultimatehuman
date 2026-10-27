@@ -1,0 +1,234 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+[id] {
+  scroll-margin-top: 5rem;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  /* Native UI stack instead of the create-next-app Arial leftover: SF Pro on
+     Apple, Segoe on Windows, Roboto on Android, with Arial still as the floor.
+     No webfont, no layout shift, and every platform gets its own UI face. */
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-kerning: normal;
+}
+
+/* Hide scrollbar for scrollable elements with the hide-scrollbar class */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* iOS Safari zoom prevention for offer pages */
+.no-zoom {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Ensure input fields are 16px+ to prevent iOS auto-zoom */
+.no-zoom input, 
+.no-zoom textarea,
+.no-zoom select {
+  font-size: 16px !important;
+}
+
+/* ─── Premium Landing Animations ─── */
+
+/* Slow floating orb */
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-20px) scale(1.05); }
+}
+.animate-float-orb {
+  animation: float-slow 6s ease-in-out infinite;
+}
+.animate-float-orb-delay {
+  animation: float-slow 8s ease-in-out 2s infinite;
+}
+
+/* CTA button glow pulse */
+.btn-glow {
+  position: relative;
+  transition: all 0.3s ease;
+}
+.btn-glow::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: inherit;
+  filter: blur(16px);
+  opacity: 0;
+  z-index: -1;
+  transition: opacity 0.4s ease;
+}
+.btn-glow:hover::after {
+  opacity: 0.5;
+}
+.btn-glow:hover {
+  box-shadow: 0 0 30px rgba(99, 102, 241, 0.3), 0 0 60px rgba(139, 92, 246, 0.15);
+}
+
+/* Card hover shine sweep */
+.card-shine {
+  position: relative;
+  overflow: hidden;
+}
+.card-shine::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+  transition: left 0.6s ease;
+  z-index: 1;
+  pointer-events: none;
+}
+.card-shine:hover::before {
+  left: 100%;
+}
+
+/* Hero fade-in — pure CSS, no JS needed */
+@keyframes hero-fade-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-hero-fade-in {
+  animation: hero-fade-in 0.8s ease-out both;
+}
+.animate-hero-fade-in-delay-1 {
+  animation: hero-fade-in 0.8s ease-out 0.2s both;
+}
+.animate-hero-fade-in-delay-2 {
+  animation: hero-fade-in 0.8s ease-out 0.4s both;
+}
+
+/*
+ * Force framer-motion hidden elements visible on SSR.
+ * CSS animations override inline styles (per spec), so this
+ * makes content visible immediately. When framer-motion JS loads,
+ * it takes control and runs its own animations normally.
+ */
+@keyframes ssr-reveal {
+  from { opacity: 1; transform: none; }
+  to { opacity: 1; transform: none; }
+}
+.ssr-visible [style*="opacity"] {
+  animation: ssr-reveal 0.01s both;
+}
+
+/* MAX activity card: a step or the card itself arriving (product motion: short, ease-out-quart) */
+@keyframes step-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-step-in {
+  animation: step-in 220ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+/* AI step update glow effect */
+@keyframes ai-step-glow {
+  0% { box-shadow: 0 0 15px rgba(147,51,234,0.35), 0 0 30px rgba(99,102,241,0.2); ring-color: rgba(147,51,234,0.5); }
+  60% { box-shadow: 0 0 8px rgba(147,51,234,0.15), 0 0 15px rgba(99,102,241,0.08); }
+  100% { box-shadow: 0 1px 3px rgba(0,0,0,0.1); ring-color: transparent; }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-orb,
+  .animate-float-orb-delay,
+  .animate-hero-fade-in,
+  .animate-hero-fade-in-delay-1,
+  .animate-hero-fade-in-delay-2,
+  .animate-step-in {
+    animation: none;
+  }
+  .card-shine::before {
+    display: none;
+  }
+}
+
+/*
+ * Mobile performance: kill expensive decorative GPU effects.
+ * Heavy filter-blur orbs and backdrop-blurs cause severe jank and
+ * 10s+ load times on lower-end phones. They are purely decorative.
+ */
+@media (max-width: 767px) {
+  /* Decorative blurred gradient orbs (always absolute + rounded + heavy blur) */
+  .blur-3xl,
+  .blur-2xl,
+  .blur-\[120px\] {
+    display: none !important;
+  }
+
+  /* Drop GPU-expensive backdrop-filter on mobile; bg colors still render */
+  .backdrop-blur-sm,
+  .backdrop-blur,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl,
+  .backdrop-blur-2xl,
+  .backdrop-blur-3xl {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* Disable hero CTA glow halo on mobile (extra paint layer) */
+  .btn-glow::after {
+    display: none !important;
+  }
+
+  /* Stop float-orb animations on mobile (they're already hidden visually) */
+  .animate-float-orb,
+  .animate-float-orb-delay {
+    animation: none !important;
+  }
+}
+
+@keyframes highlight-purple {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); }
+  50% { transform: scale(1.02); box-shadow: 0 0 20px 10px rgba(168, 85, 247, 0.2); border-color: rgb(168, 85, 247); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+}
+
+.animate-highlight-purple {
+  animation: highlight-purple 1.5s ease-out;
+}
+
+/* Trust Center: hide horizontal scrollbar on the subnav while keeping scroll */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

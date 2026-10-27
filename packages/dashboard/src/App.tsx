@@ -31,11 +31,12 @@ export interface AppState {
   go: (p: Page, sub?: string) => void;
 }
 
-/** "/" and the old "/findings" open the cockpit; Setup is home only until the first pass has finished. */
+/** The cockpit is the vendored reference page at /administration/claims; the previous one stays at /legacy-cockpit. Setup is home only until the first pass has finished. */
+const COCKPIT_URL = "/administration/claims";
 function pageFromPath(): Page | null {
-  const p = location.pathname.split("/")[1] as Page;
-  if ((p as string) === "findings") return "cockpit";
-  return PAGES.some((x) => x.id === p) ? p : null;
+  const p = location.pathname.split("/")[1];
+  if (p === "legacy-cockpit") return "cockpit";
+  return p !== "cockpit" && PAGES.some((x) => x.id === p) ? (p as Page) : null;
 }
 
 export function App() {
@@ -68,9 +69,9 @@ export function App() {
         await refresh();
         if (!pageFromPath()) {
           const runs = (await get("/api/runs")).runs as any[];
-          const home: Page = runs.some((r) => r.phase === "done") ? "cockpit" : "setup";
-          history.replaceState(null, "", `/${home}`);
-          setPage(home);
+          if (runs.some((r) => r.phase === "done")) return location.replace(COCKPIT_URL);
+          history.replaceState(null, "", "/setup");
+          setPage("setup");
         }
         setAuth("ok");
       } catch (e) {
@@ -95,15 +96,13 @@ export function App() {
   }, [auth]);
 
   const go = (p: Page, sub?: string) => {
-    history.pushState(null, "", `/${p}${sub ? `/${sub}` : ""}`);
+    if ((p as string) === COCKPIT_URL.slice(1)) return location.assign(COCKPIT_URL);
+    history.pushState(null, "", `/${p === "cockpit" ? "legacy-cockpit" : p}${sub ? `/${sub}` : ""}`);
     setPage(p);
     if (p !== "cockpit") setLanded(false);
     document.querySelector("main")?.scrollTo(0, 0);
   };
-  const land = () => {
-    go("cockpit");
-    setLanded(true);
-  };
+  const land = () => location.assign(COCKPIT_URL);
 
   if (auth !== "ok") return <Login state={auth} />;
   const state: AppState = { status, findings, run, onboarding, rev, landed, refresh, go };

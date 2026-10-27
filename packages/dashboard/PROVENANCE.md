@@ -1,11 +1,43 @@
-# Provenance: code ported from a private app
+# Provenance: code vendored from a private app
 
-The cockpit UI in this package is **not original to this repo**. It is the UI
-code of a private application's claims/pipeline cockpit page, ported so the
-radar's cockpit is pixel-identical to it. Revisit before open-sourcing: either
-confirm the right to publish these files or rewrite them.
+The cockpit in this package is **not original to this repo**. Revisit before
+open-sourcing: either confirm the right to publish these files or rewrite them.
 
-Source snapshot: the private app's `test` branch at commit `1a0aa0bc` (2026-10-27).
+## The cockpit: `app/` (vendored verbatim, 2026-10-27)
+
+`app/` and `tailwind.config.mjs` are byte-for-byte copies of the private app's
+files at its `test` branch, commit `1a0aa0bc`, kept at the SAME relative paths
+so their own imports (`./X`, `@/app/lib/...`) resolve unchanged. Served at
+`/administration/claims` (same path as the original).
+
+| File here | Changed vs the original |
+| --- | --- |
+| `app/(app)/administration/claims/page.js` | none (byte-identical) |
+| `app/(app)/administration/claims/CockpitClient.js` | none |
+| `app/(app)/administration/claims/ClaimsClient.js` | none |
+| `app/(app)/administration/claims/FocusTicket.js`, `GateClient.js`, `MobileCockpit.js`, `PhoneTickets.js`, `PhoneViewer.js`, `PlanModal.js`, `PlanTesting.js`, `SuggestedBundles.js`, `TicketSort.js` | none |
+| `app/(app)/administration/layout.js` | none |
+| `app/(app)/administration/components/AdminSidebar.js` | brand only: +1 import of `BRAND`, the two `Admin Panel` titles read `{BRAND.appName}` |
+| `app/lib/pipeline-cockpit.js`, `app/lib/pipeline-gate.js` | none |
+| `app/globals.css`, `tailwind.config.mjs` | none |
+
+Proof: `diffs/verify.sh` in the task folder diffs every file above against the
+original repo's git object directly.
+
+What makes them run outside Next.js (none of it inside `app/`):
+- `vite.config.ts` aliases `next/navigation`, `next/link`, `next-auth`,
+  `next-auth/react`, `@/app/api/auth/[...nextauth]/route`, `@/lib/db/db` and the
+  three `@/app/models/*` imports to thin adapters in `src/verbatim/shims/`, and
+  `@/` to this package root. A tiny plugin compiles JSX in `app/**/*.js`.
+- `src/verbatim/data-provider.js` is the ONE data mapping: engine `/api/cockpit`
+  -> the claim objects `page.js` reads through the model stand-ins, and the
+  page's own `/api/admin/claims/*` calls -> engine rulings.
+- `src/verbatim/main.jsx` runs `layout.js` and `page.js` (the server components)
+  once in the browser and mounts their output.
+- `src/verbatim/brand.js` is the brand constant (app name; the original has no logo).
+- `tailwind.config.js` reuses the vendored config and only adds `./src` to its content.
+
+## The previous cockpit (attempt 2): `src/ported/`, served at `/legacy-cockpit`
 
 | File here | Ported from (private app) | What was ported | What changed |
 | --- | --- | --- | --- |
@@ -13,8 +45,9 @@ Source snapshot: the private app's `test` branch at commit `1a0aa0bc` (2026-10-2
 | `src/ported/CockpitClient.jsx` | `app/(app)/administration/claims/ClaimsClient.js` | Sticky filter bar (segmented control + search), claim card anatomy (header row, verdict pill, statement, meta line, Details toggle, context panel, ticket badges, ruling box with Change, Confirm / Wrong / Build this buttons, correction form), the "just ruled stays on screen" rule | Confirm -> File to GitHub, Wrong -> Dismiss (reason required), Build this -> Not now; Clear ruling -> Withdraw ruling; ticket badges -> evidence badges; filters -> All / Critical & high / Medium & low / Drafts |
 | `src/ported/AdminSidebar.jsx` | `app/(app)/administration/components/AdminSidebar.js` | Desktop + mobile sidebar markup and classes, five of its outline icons | Next `Link`/`usePathname`/`useSession` replaced by props; nav lists the radar's pages; title is this product's name; optional footer slot |
 | `src/ported/globals.css` | `app/globals.css` | Tailwind layers, `--background/--foreground`, the native system font stack | Dark-mode variable override and the app-specific utility classes left out |
-| `tailwind.config.js` | `tailwind.config.mjs` | Tailwind 3.4 setup, `colors` and `transitionTimingFunction` extensions | Typography/blog theme, animations and plugins left out (unused here) |
 | `postcss.config.js` | `postcss.config.mjs` | as is | none |
 
-No product name, logo, tracker or ticket-system wording from the private app
-is carried over: only the code structure and the Tailwind classes.
+The legacy cockpit carries no wording from the private app. The vendored one
+carries its wording verbatim, except the app name (brand constant). Its copy
+still names the private app's assistant ("MAX") and its JS holds the private
+Jira base URL (`JIRA_BROWSE`, never rendered: the radar maps no tickets).

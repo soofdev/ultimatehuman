@@ -1,11 +1,6 @@
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
-import "./ported/globals.css";
-import "./styles.css";
-import { App } from "./App";
-
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// Two worlds, two stylesheets: /administration/* is the vendored reference
+// cockpit (app/, its own globals.css only); everything else is the radar's own
+// pages. Loading one never pulls the other's CSS.
+const root = document.getElementById("root")!;
+if (location.pathname.startsWith("/administration")) import("./verbatim/main").then((m) => m.mount(root));
+else import("./legacy-main").then((m) => m.mount(root));
