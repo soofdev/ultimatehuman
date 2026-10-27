@@ -94,6 +94,34 @@ export function FindingCard({ f, defaultOpen = false, onChanged }: { f: any; def
               ))}
             </ol>
           </div>
+          {f.rootCause.codePointers?.length > 0 && (
+            <div className="sect">
+              <h4>In the code · {plural(f.rootCause.codePointers.length, "line")} re-checked against the repo</h4>
+              <div className="cps">
+                {f.rootCause.codePointers.map((p: any, i: number) => (
+                  <div className="cp" key={i}>
+                    <div className="cp-h">
+                      {p.url ? (
+                        <a href={p.url} target="_blank" rel="noreferrer">
+                          <code>
+                            {p.path}:{p.line}
+                          </code>{" "}
+                          <ExternalLink size={12} />
+                        </a>
+                      ) : (
+                        <code>
+                          {p.path}:{p.line}
+                        </code>
+                      )}
+                      {p.commit && <span className="cp-c">at {p.commit.slice(0, 7)}</span>}
+                    </div>
+                    {p.text && <pre>{p.text}</pre>}
+                    {p.why && <div className="cp-w">{p.why}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="sect">
             <h4>Evidence · {plural(f.evidence.length, "item")}, every one clickable</h4>
             <div className="evs">

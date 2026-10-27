@@ -47,6 +47,8 @@ export interface ClaudeRunOptions {
   signal?: AbortSignal;
   transcriptPath?: string;
   timeoutMs?: number;
+  /** Extra read-only directories (the connected repo checkout). Tools stay Read/Grep/Glob. */
+  addDirs?: readonly string[];
 }
 
 export function claudeBin(): string {
@@ -88,6 +90,7 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
   if (tools.length) args.push("--allowedTools", ...tools);
   else args.push("--tools", "");
   if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
+  for (const d of opts.addDirs ?? []) args.push("--add-dir", d);
 
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {

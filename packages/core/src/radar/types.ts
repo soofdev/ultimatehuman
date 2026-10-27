@@ -71,6 +71,8 @@ export interface RunRecord {
   dropped: DroppedDraft[];
   notes: string[];
   costUsd: number;
+  /** Read-only repo checkout the agents could read for this run, if one was connected. */
+  code?: { path: string; commit?: string; repo?: string };
   /** Checkpoint: index of the next cluster to root-cause (resume after park/crash). */
   nextCluster: number;
   signals?: Signal[];

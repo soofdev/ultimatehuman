@@ -6,7 +6,7 @@ import { Ico, RunTimeline, startedLine } from "../Timeline";
 import { FindingCard } from "../FindingCard";
 import { timeS, dur } from "../fmt";
 
-const ORDER = ["claude", "posthog", "sentry", "github"];
+const ORDER = ["claude", "posthog", "sentry", "github", "code"];
 
 export function Setup({ s }: { s: AppState }) {
   const ob = s.onboarding;

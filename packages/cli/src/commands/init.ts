@@ -28,6 +28,14 @@ function findEnv(names: readonly string[]): { name: string; value: string } | nu
   return null;
 }
 
+function gitTopLevel(): string | undefined {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function gitRemoteRepo(): string | undefined {
   try {
     const url = execFileSync("git", ["remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
@@ -210,7 +218,15 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
       credentials: { ...(gh ? { token: `\${${gh.env}}` } : {}), repo },
       options: { labels: ["ultimatehuman"], dryRun: true },
     };
-    line.ok("GitHub", `${repo} · ${c.muted("dry run: issues are previewed, never created")}`);
+    const how = flags.repo ? "from --repo" : process.env.ULTIMATEHUMAN_GITHUB_REPO ? "from $ULTIMATEHUMAN_GITHUB_REPO" : repo === repoDefault && repoDefault ? "from this folder's git remote" : "typed";
+    line.ok("GitHub", `${repo} · ${c.muted(`${how} · dry run: issues are previewed, never created`)}`);
+    add({ id: "github.repo", label: "GitHub", status: "ok", summary: `Issues go to ${repo} (${how})`, detail: "Dry run: issues are rendered and previewed, never created" });
+  }
+  // The checkout we were started in becomes the read-only code the root-cause agents may read.
+  const codePath = repo && repo === gitRemoteRepo() ? gitTopLevel() : undefined;
+  if (codePath) {
+    line.ok("Code", `${tilde(codePath)} ${c.muted("· read-only: agents may Read/Grep it to cite code lines, never run or change it")}`);
+    add({ id: "code.repo", label: "Code", status: "ok", summary: `Read-only code: ${tilde(codePath)}`, detail: "Root-cause agents can Read and Grep this checkout to cite file:line pointers. They cannot run, edit or push anything." });
   }
   mark("questions");
 
@@ -231,7 +247,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     ...(port !== 4747 ? { server: { port } } : {}),
     auth: { sources: [authKind === "claude_oauth_token" ? { id: "sub", kind: "claude_oauth_token", token: "${CLAUDE_CODE_OAUTH_TOKEN}" } : { id: "sub", kind: "claude_login" }] },
     governor: { humanReservePct: 30 },
-    radar: { schedule: "0 7 * * *", lookbackHours: 24, firstPassLookbackHours: 168, minUsersAffected: 2, maxFindingsPerRun: 3, autoFile: false },
+    radar: { schedule: "0 7 * * *", lookbackHours: 24, firstPassLookbackHours: 168, minUsersAffected: 2, maxFindingsPerRun: 3, autoFile: false, ...(codePath ? { repo: { path: codePath } } : {}) },
     plugins: pluginConfig,
   };
   const path = defaultConfigPath();

@@ -12,6 +12,14 @@ export function renderIssue(f: Finding, labels: readonly string[]): { title: str
   lines.push("## What users experience", f.symptom, "");
   lines.push("## Root cause", f.rootCause.statement, "");
   for (const r of f.rootCause.reasoning) lines.push(`- ${r.claim} (${r.evidenceIds.map((id) => `[${id}](${ev.get(id)?.url ?? "#"})`).join(", ")})`);
+  if (f.rootCause.codePointers?.length) {
+    lines.push("", "**Code pointers** (each line re-checked against the repo before this was written):");
+    for (const p of f.rootCause.codePointers) {
+      const loc = `${p.path}${p.line ? `:${p.line}` : ""}`;
+      lines.push(`- ${p.url ? `[\`${loc}\`](${p.url})` : `\`${loc}\``}${p.why ? `: ${p.why}` : ""}`);
+      if (p.text) lines.push(`  \`\`\`\n  ${p.text}\n  \`\`\``);
+    }
+  }
   if (f.rootCause.ruledOut?.length) lines.push("", "**Ruled out:**", ...f.rootCause.ruledOut.map((x) => `- ${x}`));
   lines.push("", "## Evidence");
   for (const e of f.evidence) lines.push(`- **${e.id}** · ${(e as { label?: string }).label ?? e.kind} · [open in ${e.sourcePluginId}](${e.url})`, `  > ${e.excerpt.replace(/\n/g, "\n  > ")}`);

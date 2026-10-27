@@ -1,5 +1,6 @@
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, statSync } from "node:fs";
+import { join, resolve, relative, isAbsolute } from "node:path";
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import type { Finding, Evidence, Plugin, PluginContext, Signal, SourcePlugin, ServerEvent } from "@ultimatehuman/sdk";
 import type { Config } from "../config/schema";
@@ -8,7 +9,7 @@ import type { WindowTracker } from "../governor/tracker";
 import { runClaude, extractJson, type ClaudeRunResult } from "../runner/claude";
 import { readOnlyHttp } from "../plugins/http";
 import { redact, hashUser } from "./redact";
-import { DraftSchema, ReviewSchema, rootCausePrompt, adversarialPrompt, type Draft, type Review } from "./prompts";
+import { DraftSchema, ReviewSchema, rootCausePrompt, adversarialPrompt, type Draft, type Review, type CodeContext } from "./prompts";
 import type { Cluster, RunRecord, StepEntry, PhaseEntry } from "./types";
 
 export interface RadarDeps {
@@ -62,6 +63,11 @@ export class Radar {
       costUsd: 0,
       nextCluster: 0,
     };
+    const code = codeContext(cfg);
+    if (code) {
+      run.code = code;
+      run.notes.push(`Code connected read-only: ${code.path}${code.commit ? ` at ${code.commit.slice(0, 10)}` : ""}. Agents may Read/Grep it; code pointers are re-checked against the files.`);
+    } else run.notes.push("No code connected: root causes stay at the level the analytics data supports.");
     this.active = run;
     this.save(run);
     void this.execute(run).catch((e) => this.fail(run, e));
@@ -284,6 +290,7 @@ export class Radar {
       maxTurns: 14,
       env: await this.d.runnerEnv(),
       transcriptPath: join(cwd, `${kind}${resumeSessionId ? ".repair" : ""}.transcript.jsonl`),
+      ...(run.code ? { addDirs: [run.code.path] } : {}),
       ...(resumeSessionId ? { resumeSessionId } : {}),
     });
     for (const r of res.rateLimits) tr.ingest(r, run.id);
@@ -340,7 +347,7 @@ export class Radar {
 
     // root-cause
     const s1 = this.step(run, c, "root_cause");
-    const r1 = await this.agent(run, s1, "root_cause", rootCausePrompt(cfg.radar.minUsersAffected), cdir);
+    const r1 = await this.agent(run, s1, "root_cause", rootCausePrompt(cfg.radar.minUsersAffected, run.code), cdir);
     if (!r1) return true;
     if (!r1.ok) {
       this.endStep(run, s1, "failed", r1.error ?? "agent failed");
@@ -364,7 +371,7 @@ export class Radar {
 
     // deterministic gate
     const s2 = this.step(run, c, "gate");
-    const gate = deterministicGate(draft, bundle, c, cfg.radar.minUsersAffected);
+    const gate = deterministicGate(draft, bundle, c, cfg.radar.minUsersAffected, run.code);
     if (!gate.ok) {
       this.endStep(run, s2, "dropped", gate.reason);
       run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "gate", reason: gate.reason, title: draft.title ?? "", at: now() });
@@ -374,7 +381,7 @@ export class Radar {
 
     // adversarial
     const s3 = this.step(run, c, "adversarial");
-    const r3 = await this.agent(run, s3, "adversarial", adversarialPrompt(JSON.stringify(draft, null, 2)), cdir);
+    const r3 = await this.agent(run, s3, "adversarial", adversarialPrompt(JSON.stringify(draft, null, 2), run.code), cdir);
     if (!r3) return true;
     const review = r3.ok ? await this.parseWithRepair<Review>(run, s3, "adversarial", r3, cdir, ReviewSchema as any) : null;
     if (review === "parked") return true;
@@ -513,7 +520,38 @@ export function correlate(signals: readonly Signal[]): Cluster[] {
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 
-export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number): { ok: true; note: string } | { ok: false; reason: string } {
+/** Repo checkout from config (radar.repo.path), with the commit it is at. Read-only: git rev-parse only. */
+export function codeContext(cfg: Config): CodeContext | undefined {
+  const p = cfg.radar.repo?.path;
+  if (!p || !existsSync(p) || !statSync(p).isDirectory()) return undefined;
+  const root = realpathSync(p);
+  let commit: string | undefined;
+  try {
+    commit = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    /* not a git checkout: pointers still work, without a commit */
+  }
+  const repo = cfg.plugins.github?.credentials?.repo;
+  return { path: root, ...(commit ? { commit } : {}), ...(typeof repo === "string" && repo ? { repo } : {}) };
+}
+
+/** Re-finds a code pointer in the checkout: path stays inside the repo, the quoted line is at (or within 2 lines of) the cited line. */
+export function checkCodePointer(code: CodeContext, ptr: { path: string; line: number; text: string }): { ok: true; line: number } | { ok: false; reason: string } {
+  const rel = isAbsolute(ptr.path) ? relative(code.path, ptr.path) : ptr.path;
+  const abs = resolve(code.path, rel);
+  if (rel.startsWith("..") || isAbsolute(rel) || !existsSync(abs)) return { ok: false, reason: `code pointer ${ptr.path} is not a file in the repo` };
+  const real = realpathSync(abs);
+  if (relative(code.path, real).startsWith("..") || !statSync(real).isFile()) return { ok: false, reason: `code pointer ${ptr.path} leaves the repo` };
+  const lines = readFileSync(real, "utf8").split("\n");
+  const want = squash(ptr.text);
+  for (const delta of [0, -1, 1, -2, 2]) {
+    const n = ptr.line + delta;
+    if (n >= 1 && n <= lines.length && squash(lines[n - 1]!).includes(want)) return { ok: true, line: n };
+  }
+  return { ok: false, reason: `code pointer ${rel}:${ptr.line} not found verbatim: "${ptr.text.slice(0, 80)}"` };
+}
+
+export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number, code?: CodeContext): { ok: true; note: string } | { ok: false; reason: string } {
   if (!d.title || !d.symptom || !d.rootCause || !d.reproduction || !d.fingerprint || !d.severity || !d.confidence || !d.openQuestions)
     return { ok: false, reason: "a required field is empty (title, symptom, rootCause, reproduction, fingerprint, severity, confidence or openQuestions)" };
   const cited = new Set(d.rootCause.reasoning.flatMap((r) => r.evidenceIds));
@@ -530,7 +568,18 @@ export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number
     }
   }
   if (c.usersAffected < floor && d.severity !== "critical") return { ok: false, reason: `${c.usersAffected} users affected, below the ${floor}-user floor` };
-  return { ok: true, note: `${cited.size} evidence items, ${quotes} quotes re-found verbatim, ${c.usersAffected} users ≥ floor ${floor}` };
+  let ptrs = 0;
+  if (d.codePointers?.length) {
+    if (!code) return { ok: false, reason: "cites code pointers but no code is connected" };
+    for (const ptr of d.codePointers) {
+      const r = checkCodePointer(code, ptr);
+      if (!r.ok) return { ok: false, reason: r.reason };
+      ptr.line = r.line;
+      if (isAbsolute(ptr.path)) ptr.path = relative(code.path, ptr.path);
+      ptrs++;
+    }
+  }
+  return { ok: true, note: `${cited.size} evidence items, ${quotes} quotes re-found verbatim${code ? `, ${ptrs} code pointer${ptrs === 1 ? "" : "s"} re-found in the repo` : ""}, ${c.usersAffected} users ≥ floor ${floor}` };
 }
 
 function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b: Bundle): Finding {
@@ -554,6 +603,18 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
     rootCause: {
       statement: rw.statement ?? d.rootCause!.statement,
       reasoning: d.rootCause!.reasoning.map((r) => ({ claim: r.claim, evidenceIds: r.evidenceIds })),
+      ...(d.codePointers?.length
+        ? {
+            codePointers: d.codePointers.map((p) => ({
+              path: p.path,
+              line: p.line,
+              text: p.text.trim(),
+              why: p.why,
+              ...(run.code?.commit ? { commit: run.code.commit } : {}),
+              ...(run.code?.repo ? { url: `https://github.com/${run.code.repo}/blob/${run.code.commit ?? "HEAD"}/${p.path}#L${p.line}` } : {}),
+            })),
+          }
+        : {}),
       ruledOut: d.rootCause!.ruledOut,
     },
     evidence,
