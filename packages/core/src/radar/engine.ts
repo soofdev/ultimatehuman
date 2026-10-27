@@ -572,10 +572,15 @@ function emptyReason(run: RunRecord, floor: number): string {
   const floorN = run.dropped.filter((x) => x.stage === "floor").length;
   const rc = run.dropped.filter((x) => x.stage !== "floor" && x.stage !== "rank");
   const src = run.sources.filter((s) => s.ok).map((s) => s.pluginId).join(", ") || "no source";
-  const parts = [`${run.signalsCollected} signals from ${src} over ${run.lookbackHours} h`];
-  if (floorN) parts.push(`${floorN} clusters below the ${floor}-user floor`);
-  if (rc.length) parts.push(`${rc.length} root-caused and dropped (${rc.map((x) => x.stage).join(", ")})`);
-  return `No clear problems found: ${parts.join("; ")}.`;
+  const days = run.lookbackHours % 24 === 0 ? `${run.lookbackHours / 24} days` : `${run.lookbackHours} hours`;
+  const by: Record<string, string> = { root_cause: "the root-cause agent", gate: "the evidence gate", adversarial: "the adversarial review", dedupe: "dedupe" };
+  const parts = [`${run.signalsCollected} signals from ${src} over the last ${days}`];
+  if (floorN) parts.push(`${floorN} ${floorN === 1 ? "pattern" : "patterns"} touched fewer than ${floor} people`);
+  for (const [stage, who] of Object.entries(by)) {
+    const n = rc.filter((x) => x.stage === stage).length;
+    if (n) parts.push(`${n} investigated and dropped by ${who}`);
+  }
+  return `${parts.join("; ")}. Each drop and its reason is on the Runs page.`;
 }
 
 export function publicRun(run: RunRecord): Omit<RunRecord, "signals"> {

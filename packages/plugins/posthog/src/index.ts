@@ -4,7 +4,7 @@ import { definePlugin, type PluginContext, type ProbeResult, type Signal, type T
  * PostHog source. Read-only: GETs plus the HogQL query endpoint (POST with
  * read semantics, allowlisted). Signals: interaction friction (rage clicks,
  * dead clicks, dead swipes) per route with a previous-window baseline,
- * $exception groups, slow LCP per route, and recordings that logged console
+ * $exception groups, the product's own error events, slow LCP per route, and recordings that logged console
  * errors. Team members' own activity and the project's test-account filters
  * are excluded before anything is counted.
  */
@@ -304,6 +304,62 @@ GROUP BY 1, 2, 3 ORDER BY 4 DESC LIMIT 200`,
         };
       }
 
+      // 2b. The product's own error events (any non-$ event named like error/fail/exception/crash),
+      // grouped by event + reason + route, with the previous window as baseline.
+      const why = `substring(coalesce(toString(properties.reason), toString(properties.error), toString(properties.error_message), toString(properties.message), ''), 1, 200)`;
+      const isErr = `NOT startsWith(event, '$') AND match(lower(event), '(error|fail|exception|crash)')`;
+      const ce = await hogql(
+        ctx,
+        `SELECT event, ${why}, properties.$pathname, count(), groupUniqArray(500)(distinct_id), groupUniqArray(20)(properties.$session_id), min(timestamp), max(timestamp)
+FROM events WHERE ${isErr} AND timestamp >= toDateTime('${from}') AND timestamp < toDateTime('${to}') AND ${filt}
+GROUP BY 1, 2, 3 ORDER BY 4 DESC LIMIT 200`,
+      );
+      const cePrev = await hogql(
+        ctx,
+        `SELECT event, ${why}, count(), uniq(distinct_id) FROM events WHERE ${isErr} AND timestamp >= toDateTime('${prevFrom}') AND timestamp < toDateTime('${from}') AND ${filt} GROUP BY 1, 2`,
+      );
+      const ceBefore = new Map(cePrev.results.map((r) => [`${r[0]}|${r[1]}`, { n: Number(r[2]), u: Number(r[3]) }]));
+      const ceGroups = new Map<string, { event: string; reason: string; route: string; n: number; users: Set<string>; sessions: Set<string>; first: string; last: string }>();
+      for (const r of ce.results) {
+        const [event, reason, path, count, users, sessions, first, last] = r as [string, string, string, number, string[], string[], string, string];
+        const route = normalizeRoute(path);
+        const key = `${event}|${reason}|${route}`;
+        const g = ceGroups.get(key) ?? { event, reason, route, n: 0, users: new Set(), sessions: new Set(), first, last };
+        g.n += Number(count);
+        users.forEach((u) => g.users.add(u));
+        sessions.filter(Boolean).forEach((x) => g.sessions.add(x));
+        if (first < g.first) g.first = first;
+        if (last > g.last) g.last = last;
+        ceGroups.set(key, g);
+      }
+      for (const g of ceGroups.values()) {
+        const before = ceBefore.get(`${g.event}|${g.reason}`);
+        yield {
+          id: `posthog:event_error:${g.event}|${g.reason}|${g.route}`,
+          pluginId: "posthog",
+          type: "error_group",
+          title: `${g.event}${g.reason ? `: "${g.reason.slice(0, 70)}"` : ""} on ${g.route}`,
+          firstSeen: g.first,
+          lastSeen: g.last,
+          count: g.n,
+          usersAffected: g.users.size,
+          url: insightLink(ctx, `SELECT timestamp, event, ${why} AS reason, properties.$pathname, distinct_id, properties.$session_id FROM events WHERE event = ${sqlStr(g.event)} AND timestamp >= toDateTime('${from}') ORDER BY timestamp DESC LIMIT 200`),
+          keys: { route: g.route, fingerprint: `${g.event}|${g.reason}`, users: [...g.users], sessions: [...g.sessions].slice(0, 12) },
+          excerpt: {
+            event: g.event,
+            reason: g.reason || "(no reason property)",
+            route: g.route,
+            occurrences: g.n,
+            users: g.users.size,
+            firstInWindow: g.first,
+            lastInWindow: g.last,
+            previousWindowOccurrences: before?.n ?? 0,
+            previousWindowUsers: before?.u ?? 0,
+            note: "custom event sent by the product's own code, not by PostHog autocapture",
+          },
+        };
+      }
+
       // 3. Slow pages: p75 LCP per route (Google's "poor" threshold is 4 s).
       const lcp = await hogql(
         ctx,
@@ -407,7 +463,7 @@ GROUP BY 1 LIMIT 2000`,
       if (!ids.length) return { sessions: [] };
       const r = await hogql(
         ctx,
-        `SELECT properties.$session_id, timestamp, event, properties.$pathname, substring(toString(properties.$el_text), 1, 90), distinct_id, substring(toString(properties.$exception_message), 1, 160), properties.$event_type, substring(splitByChar(':', splitByChar(';', toString(elements_chain))[1])[1], 1, 40)
+        `SELECT properties.$session_id, timestamp, event, properties.$pathname, substring(toString(properties.$el_text), 1, 90), distinct_id, substring(coalesce(toString(properties.$exception_message), toString(properties.reason), toString(properties.error), toString(properties.message), ''), 1, 160), properties.$event_type, substring(splitByChar(':', splitByChar(';', toString(elements_chain))[1])[1], 1, 40)
 FROM events WHERE properties.$session_id IN (${ids.map(sqlStr).join(",")}) AND event NOT IN ('$web_vitals', '$feature_flag_called', '$set', '$opt_in')
 ORDER BY timestamp ASC LIMIT 1200`,
       );

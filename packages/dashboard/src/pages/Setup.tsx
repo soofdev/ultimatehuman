@@ -1,4 +1,6 @@
-import { ArrowRight, Radar, SearchCheck } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, History, Radar, SearchCheck } from "lucide-react";
+import { post } from "../api";
 import type { AppState } from "../App";
 import { Ico, RunTimeline, startedLine } from "../Timeline";
 import { FindingCard } from "../FindingCard";
@@ -15,11 +17,18 @@ export function Setup({ s }: { s: AppState }) {
   const first = runFindings[runFindings.length - 1];
   const sinceInit = first && ob?.initStartedAt ? Date.parse(first.createdAt) - Date.parse(ob.initStartedAt) : null;
   const done = run?.phase === "done";
+  const wider = run && run.trigger !== "onboarding";
+  const days = run ? Math.round(run.lookbackHours / 24) : 7;
+  const [widening, setWidening] = useState(false);
+  const widen = () => {
+    setWidening(true);
+    void post("/api/runs", { trigger: "run_now", lookbackHours: 720 }).then(() => s.refresh()).finally(() => setWidening(false));
+  };
 
   return (
     <div className="stack">
       <div>
-        <h1 className="h1">{first ? "Your first finding is in." : done ? "First pass complete." : "You're set up. The first pass is running."}</h1>
+        <h1 className="h1">{first ? "Your first finding is in." : wider ? (done ? `${days}-day pass complete.` : `Looking back ${days} days.`) : done ? "First pass complete." : "You're set up. The first pass is running."}</h1>
         <p className="lede">
           {first
             ? "Root-caused from your own PostHog data, checked by a gate and a second agent that tried to break it. Every claim links back to the data."
@@ -61,7 +70,7 @@ export function Setup({ s }: { s: AppState }) {
           <div className="card-h">
             <h3>
               <Radar size={15} style={{ verticalAlign: -2, marginRight: 6 }} />
-              First radar pass
+              {wider ? `Wider pass · ${days} days` : "First radar pass"}
             </h3>
             <span className="sub">{startedLine(run)}</span>
           </div>
@@ -93,8 +102,13 @@ export function Setup({ s }: { s: AppState }) {
       {done && !first && (
         <section className="card empty">
           <SearchCheck size={28} color="var(--ok)" />
-          <h3>No clear problems found</h3>
+          <h3>No clear problems in the last {days} days</h3>
           <p>{run.emptyReason}</p>
+          {run.lookbackHours < 720 && (
+            <button className="btn primary" style={{ marginTop: 18 }} onClick={widen} disabled={widening}>
+              <History size={14} /> Look back 30 days
+            </button>
+          )}
         </section>
       )}
     </div>

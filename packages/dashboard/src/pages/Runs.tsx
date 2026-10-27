@@ -60,7 +60,7 @@ export function Runs({ s }: { s: AppState }) {
               </div>
               <div className="card-b">
                 {[...nonFloor, ...floor].map((d: any, i: number) => (
-                  <div className="dropped" key={i}>
+                  <div className="drop-row" key={i}>
                     <span className="stagetag">{STAGE[d.stage] ?? d.stage}</span>
                     <div>
                       <div style={{ fontWeight: 560 }}>{d.title ?? d.clusterTitle}</div>
