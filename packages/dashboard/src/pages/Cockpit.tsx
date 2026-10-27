@@ -152,7 +152,7 @@ export function Cockpit({ s }: { s: AppState }) {
         <div className="stack">
           {lists.parked.length > 0 && (
             <p className="tabnote">
-              <PauseCircle size={14} /> Parked items are checked on every pass. One returns to New on its own the first time a pass sees an occurrence after you parked it.
+              <PauseCircle size={14} /> Parked items are checked on every pass. One comes back on its own, re-investigated, the first time a pass sees an occurrence after you parked it.
             </p>
           )}
           {lists.parked.map((c) =>

@@ -67,7 +67,7 @@ const RULING_LABEL: Record<Ruling["ruling"], string> = {
   dismiss: "Dismissed",
   park: "Parked: not now",
   clear: "Ruling withdrawn",
-  resurfaced: "Back in New",
+  resurfaced: "Back for a fresh look",
 };
 
 const STAGE_LABEL: Record<string, string> = {
@@ -101,7 +101,7 @@ function rulingHistory(rs: Ruling[]): HistoryEntry[] {
     at: r.at,
     kind: r.ruling,
     by: r.by,
-    label: r.ruling === "file" && r.dryRun ? "Filed to GitHub (dry run, nothing sent)" : r.ruling === "resurfaced" ? `Back in New: ${r.note ?? "new evidence"}` : RULING_LABEL[r.ruling],
+    label: r.ruling === "file" && r.dryRun ? "Filed to GitHub (dry run, nothing sent)" : r.ruling === "resurfaced" ? `Back for a fresh look: ${r.note ?? "new evidence"}` : RULING_LABEL[r.ruling],
     reason: r.reason,
   }));
 }

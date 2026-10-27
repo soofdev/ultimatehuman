@@ -19,7 +19,7 @@ export function RulingBox({ card, onChange }: { card: any; onChange: () => void 
         : "The radar tracks it for recurrence: it is re-investigated only if it happens again after this ruling."
       : r.ruling === "dismiss"
         ? "Suppression rule: later passes skip it before any agent runs. It comes back only if twice as many people hit it."
-        : "It stays here until a pass sees a new occurrence after this ruling. Then it returns to New on its own.";
+        : "It stays here until a pass sees a new occurrence after this ruling. Then it comes back on its own for a fresh look.";
   return (
     <div className={`rbox ${look}`} data-ruling={r.ruling}>
       <Icon size={16} className="rbox-i" />

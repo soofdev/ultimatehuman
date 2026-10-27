@@ -421,7 +421,7 @@ export class Radar {
   /**
    * Rulings are ground truth and run before any agent spend. Per cluster, the ruling in force decides:
    * - Dismiss: suppressed. It comes back only if the impact escalates (at least twice the people, and 2 more, than when dismissed).
-   * - Not now: stays parked until a run sees an occurrence after the ruling; then it resurfaces in New and is re-investigated.
+   * - Not now: stays parked until a run sees an occurrence after the ruling; then it resurfaces and is re-investigated.
    * - File: tracked for recurrence. An occurrence after filing re-investigates it as a recurrence; otherwise it is skipped.
    * - No ruling yet, but already in the feed: not re-investigated. New occurrences refresh the card's impact numbers.
    */
@@ -439,7 +439,7 @@ export class Radar {
         if (base && c.usersAffected >= Math.max(base * 2, base + 2)) {
           store.addRuling({ clusterId: c.id, ruling: "resurfaced", reason: null, by: "radar", note: `${c.usersAffected} people now, ${base} when you dismissed it`, title: c.title });
           if (r.fingerprint) store.removeDismissRule(r.fingerprint);
-          add(c, "escalated", `dismissed ${shortDate(r.at)}, but ${c.usersAffected} people are affected now (${base} then): back in New and re-investigated`);
+          add(c, "escalated", `dismissed ${shortDate(r.at)}, but ${c.usersAffected} people are affected now (${base} then): re-investigated`);
           keep.push(c);
         } else add(c, "suppressed", `dismissed ${shortDate(r.at)}: "${r.reason}". Not re-investigated.`);
         continue;
@@ -476,7 +476,7 @@ export class Radar {
     const n = (o: RuledEntry["outcome"]) => ruled.filter((x) => x.outcome === o);
     const titles = (xs: RuledEntry[]) => xs.map((x) => x.clusterTitle).join("; ");
     if (n("suppressed").length) run.notes.push(`${n("suppressed").length} suppressed by ruling: ${titles(n("suppressed"))}. Dismissed items stay out unless their impact escalates.`);
-    if (n("parked").length) run.notes.push(`${n("parked").length} parked by ruling, checked for new evidence: no occurrence after your ruling, so ${n("parked").length === 1 ? "it stays" : "they stay"} parked (${titles(n("parked"))}). A parked item resurfaces in New the first time a run sees an occurrence after you parked it.`);
+    if (n("parked").length) run.notes.push(`${n("parked").length} parked by ruling, checked for new evidence: no occurrence after your ruling, so ${n("parked").length === 1 ? "it stays" : "they stay"} parked (${titles(n("parked"))}). A parked item comes back for a fresh look the first time a run sees an occurrence after you parked it.`);
     if (n("resurfaced").length) run.notes.push(`${n("resurfaced").length} resurfaced from Parked on new evidence: ${titles(n("resurfaced"))}.`);
     if (n("escalated").length) run.notes.push(`${n("escalated").length} dismissed item came back because its impact escalated: ${titles(n("escalated"))}.`);
     const settled = [...n("already_filed"), ...n("awaiting_ruling")];
