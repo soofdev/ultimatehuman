@@ -45,7 +45,11 @@ export const ReviewSchema = z.object({
   reasons: z.array(z.string()).min(1),
   rewrite: z
     .object({
-      title: z.string().max(90).optional(),
+      // An over-long suggested title only loses the suggestion (the draft keeps its own); it must not void the review.
+      title: z
+        .string()
+        .optional()
+        .transform((t) => (t && t.length <= 90 ? t : undefined)),
       statement: z.string().optional(),
       confidence: z.enum(["confirmed", "likely"]).optional(),
       severity: z.enum(["critical", "high", "medium", "low"]).optional(),

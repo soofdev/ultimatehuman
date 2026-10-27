@@ -389,7 +389,7 @@ export class Radar {
     if (review === "parked") return true;
     writeFileSync(join(cdir, "review.json"), JSON.stringify(review, null, 2));
     if (!review || review.verdict === "broken") {
-      const why = review ? review.reasons.join(" ") : `review step failed: ${r3.error ?? "unparseable answer"}`;
+      const why = review ? review.reasons.join(" ") : `review step failed: ${r3.error ?? "the answer failed schema validation twice"}`;
       this.endStep(run, s3, "dropped", why);
       run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "adversarial", reason: why, usersAffected: c.usersAffected, title: draft.title ?? "", at: now() });
       return false;
@@ -652,7 +652,7 @@ export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number
 }
 
 function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b: Bundle): Finding {
-  const rw = review.verdict === "partly" ? review.rewrite ?? {} : {};
+  const rw: Partial<NonNullable<Review["rewrite"]>> = review.verdict === "partly" ? review.rewrite ?? {} : {};
   const cited = [...new Set(d.rootCause!.reasoning.flatMap((r) => r.evidenceIds))].sort((a, z) => a.localeCompare(z, "en", { numeric: true }));
   const evidence: Evidence[] = cited.map((id) => {
     const e = b.evidence.get(id)!;
