@@ -59,6 +59,7 @@ export function RunTimeline({ run }: { run: any }) {
   const correlate = ph("correlating");
   const rc = ph("root_causing");
   const ready = ph("ready");
+  const retro = ph("retrospective");
   const parked = run.phase === "parked";
   const clusters: any[] = run.clusters ?? [];
   const byCluster = (id: string) => (run.steps ?? []).filter((s: any) => s.clusterId === id);
@@ -129,6 +130,16 @@ export function RunTimeline({ run }: { run: any }) {
         </div>
         <div className="t-time">{span(rc?.startedAt, rc?.endedAt)}</div>
       </li>
+      {(retro || run.retrospective) && (
+        <li className={retro?.status === "done" ? "done" : ""}>
+          <Ico s={retro?.status ?? "skipped"} />
+          <div>
+            <div className="t-title">Retrospective</div>
+            <div className="t-note">{run.retrospective?.note ?? retro?.note ?? "Reads this pass against your instructions; any change it suggests waits for your ruling"}</div>
+          </div>
+          <div className="t-time">{span(retro?.startedAt, retro?.endedAt)}</div>
+        </li>
+      )}
       <li>
         <Ico s={run.phase === "done" ? "done" : run.phase === "failed" ? "failed" : "wait"} />
         <div>

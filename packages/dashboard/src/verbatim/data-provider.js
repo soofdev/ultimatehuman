@@ -17,12 +17,16 @@
 //   Answer A               -> POST /api/findings/:id/file (dry run while no GitHub token)
 //   Answer B, Cancel ticket -> POST /api/rulings dismiss, the text is the reason
 //   Answer C               -> POST /api/rulings park
+//   instruction proposal, pending -> queue 'decision' (TEACH-n): A Apply / B Reject / C Not now
+//   proposal parked / applied / rejected or stale -> 'decision' answered C / 'shipped' / 'cancelled'
 //   validation gate, merge, building, manual, bundles, flags, chat -> none: no fix legs in this radar.
 
 let csrf = '';
 let feed = null;
 const keyOf = new Map(); // clusterId -> ticket key, stable for the page's life
 const cardOf = new Map(); // ticket key -> cockpit card
+const proposalKey = new Map(); // proposal id -> ticket key
+const proposalOf = new Map(); // ticket key -> instruction proposal
 
 const realFetch = window.fetch.bind(window);
 
@@ -133,15 +137,94 @@ function toTicket(card, key) {
   return { ...base, queue: 'cancelled', cancelled_at: d.at, cancel: { reason: `The radar dropped it in the ${d.runLabel}: ${d.reason}`, requested_at: d.at, acked_at: d.at, ack_error: null } };
 }
 
+// Agent proposals to amend the instructions (SPEC 7b): the same decision grammar as a finding.
+const BRIEF_FILE = { collector: 'collector.md', admission: 'admission.md', gate: 'gate.md', scope: 'scope.md' };
+const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+
+function proposalDecision(p) {
+  const file = BRIEF_FILE[p.brief] || p.brief;
+  const next = (feed?.instructionsVersion || p.baseVersion) + 1;
+  return {
+    question: `Teach your radar: ${p.title}. Apply this change to ${file}?`,
+    options: [
+      { letter: 'A', label: 'Apply', text: `Saves it as instructions v${next}; the next pass reads it. Config > Instructions reverts it in one tap.` },
+      { letter: 'B', label: 'Reject', text: 'Say why in the box below: the next retrospectives read your reason and do not propose it again without new evidence.' },
+      { letter: 'C', label: 'Not now', text: 'Keep it here for later. Nothing changes meanwhile.' },
+    ],
+    recommendation: '',
+    context: [
+      `The gap: ${p.gap}`,
+      ...p.evidence.map((e) => `Evidence: ${e.label} (${e.ref}): ${e.what}`),
+      ...p.diff.map((l) => `${l.op === '+' ? 'Added' : 'Removed'} line in ${file}: ${l.text.trim() || '(blank line)'}`),
+      ...p.edits.map((e) => `Why: ${e.because}`),
+      `Expected effect: ${p.expectedEffect}`,
+      `Size of ${file}: about ${p.tokensBefore} to ${p.tokensAfter} tokens (${signed(p.tokensAfter - p.tokensBefore)}), read on every agent step.`,
+      `Drafted by the retrospective of ${p.runId} on instructions v${p.baseVersion}. It never applies itself.`,
+    ],
+  };
+}
+
+function proposalTicket(p, key) {
+  const last = p.rulings[p.rulings.length - 1] || null;
+  const base = {
+    key,
+    title: `Instructions: ${p.title}`,
+    plain: { improves: p.title, problem: p.gap, how: p.expectedEffect },
+    verdict: '',
+    fix_class: '',
+    hold: null,
+    prs: [],
+    evidence: [],
+    flags: [],
+    chat: [],
+    decision: null,
+    merged_at: null,
+    cancelled_at: null,
+    fix_round: null,
+    manual: null,
+    plan: null,
+    jira_status: null,
+    jira_created: p.createdAt,
+    jira_updated: last?.at || p.createdAt,
+    createdAt: p.createdAt,
+    synced_at: last?.at || p.createdAt,
+  };
+  if (p.status === 'applied') return { ...base, queue: 'shipped', merged_at: last.at };
+  if (p.status === 'rejected' || p.status === 'stale') {
+    const why = p.status === 'rejected' ? `You rejected it: ${last.reason}` : `Not applied: ${last.reason}`;
+    return { ...base, queue: 'cancelled', cancelled_at: last.at, cancel: { reason: why, requested_at: last.at, acked_at: last.at, ack_error: null } };
+  }
+  const answer = p.status === 'parked' ? { option: 'C', text: last.reason || '', answered_at: last.at, acked_at: last.at, ack_error: null } : null;
+  return { ...base, queue: 'decision', decision: proposalDecision(p), answer };
+}
+
 async function refresh() {
   feed = await engine('/api/cockpit');
   const cards = [...feed.cards].sort((a, b) => firstAt(a).localeCompare(firstAt(b)));
   for (const c of cards) if (!keyOf.has(c.clusterId)) keyOf.set(c.clusterId, `${keyPrefix()}-${keyOf.size + 1}`);
   cardOf.clear();
   for (const c of cards) cardOf.set(keyOf.get(c.clusterId), c);
+  const props = [...(feed.proposals || [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  for (const p of props) if (!proposalKey.has(p.id)) proposalKey.set(p.id, `TEACH-${proposalKey.size + 1}`);
+  proposalOf.clear();
+  for (const p of props) proposalOf.set(proposalKey.get(p.id), p);
 }
 
-const tickets = () => [...cardOf].map(([key, c]) => toTicket(c, key));
+const tickets = () => [...[...cardOf].map(([key, c]) => toTicket(c, key)), ...[...proposalOf].map(([key, p]) => proposalTicket(p, key))];
+
+const PROPOSAL_RULING = { A: 'apply', B: 'reject', C: 'park' };
+
+async function answerProposal(key, option, why) {
+  const p = proposalOf.get(key);
+  const before = proposalTicket(p, key);
+  const ruling = PROPOSAL_RULING[option];
+  if (!ruling) return json(400, { error: 'Pick A, B or C: Apply, Reject or Not now.' });
+  if (ruling === 'reject' && !why) return json(400, { error: 'Say why in the box: the next retrospectives read your reason.' });
+  await engine(`/api/proposals/${encodeURIComponent(p.id)}/rule`, { ruling, reason: why });
+  await refresh();
+  const at = new Date().toISOString();
+  return json(200, { ticket: { ...before, answer: { option, text: why, answered_at: at, acked_at: at, ack_error: null } } });
+}
 
 /** When the radar last reported: the running pass's latest phase, else the last pass's end. */
 function syncStatus() {
@@ -175,6 +258,7 @@ export const PipelineSyncStatus = { findOne: () => lean(syncStatus) };
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 async function answer({ key, option, text }) {
+  if (proposalOf.has(key)) return answerProposal(key, option, (text || '').trim());
   const card = cardOf.get(key);
   if (!card) return json(404, { error: 'Unknown ticket' });
   const before = toTicket(card, key);
@@ -197,6 +281,14 @@ async function answer({ key, option, text }) {
 }
 
 async function cancel({ key, reason }) {
+  if (proposalOf.has(key)) {
+    if (!(reason || '').trim()) return json(400, { error: 'Say why: the next retrospectives read your reason.' });
+    const before = proposalTicket(proposalOf.get(key), key);
+    await engine(`/api/proposals/${encodeURIComponent(proposalOf.get(key).id)}/rule`, { ruling: 'reject', reason: reason.trim() });
+    await refresh();
+    const at = new Date().toISOString();
+    return json(200, { ticket: { ...before, cancel: { reason: reason.trim(), requested_at: at, acked_at: at, ack_error: null } } });
+  }
   const card = cardOf.get(key);
   if (!card) return json(404, { error: 'Unknown ticket' });
   const why = (reason || '').trim();
@@ -245,3 +337,6 @@ function relink(root) {
 }
 new MutationObserver((records) => records.forEach((r) => r.addedNodes.forEach((n) => n.nodeType === 1 && relink(n.parentNode || n))))
   .observe(document.documentElement, { childList: true, subtree: true });
+
+// The radar's own pages under /administration (src/teach/) call the engine through the same signed-in helper.
+export { engine as engineCall };

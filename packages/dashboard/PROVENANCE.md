@@ -17,7 +17,7 @@ so their own imports (`./X`, `@/app/lib/...`) resolve unchanged. Served at
 | `app/(app)/administration/claims/ClaimsClient.js` | none |
 | `app/(app)/administration/claims/FocusTicket.js`, `GateClient.js`, `MobileCockpit.js`, `PhoneTickets.js`, `PhoneViewer.js`, `PlanModal.js`, `PlanTesting.js`, `SuggestedBundles.js`, `TicketSort.js` | none |
 | `app/(app)/administration/layout.js` | none |
-| `app/(app)/administration/components/AdminSidebar.js` | brand: +1 import of `BRAND`, the two `Admin Panel` titles read `{BRAND.appName}`; Vincent order (2026-10-27): the nav lists only Pipeline and Pipeline live (`RADAR_PAGES`), no Super Admin divider |
+| `app/(app)/administration/components/AdminSidebar.js` | brand: +1 import of `BRAND`, the two `Admin Panel` titles read `{BRAND.appName}`; Vincent order (2026-10-27): the nav lists only Pipeline and Pipeline live (`RADAR_PAGES`), no Super Admin divider; Teach your radar (2026-10-28): +1 nav entry `Config` (`/administration/config`, the gear icon of the file's own commented-out Settings entry) added to `RADAR_PAGES` |
 | `app/(app)/administration/pipeline-live/page.js`, `LiveClient.js`, `app/lib/pipeline-live.js`, `app/lib/pipeline-live-data.js` | none (byte-identical, added 2026-10-27, same commit `1a0aa0bc`) |
 | `app/lib/pipeline-cockpit.js`, `app/lib/pipeline-gate.js` | none |
 | `app/globals.css`, `tailwind.config.mjs` | none |
@@ -36,6 +36,10 @@ What makes them run outside Next.js (none of it inside `app/`):
   pages' own `/api/admin/pipeline/*` calls -> engine rulings.
 - `src/verbatim/main.jsx` runs `layout.js` and `page.js` (the server components)
   once in the browser and mounts their output.
+- `src/teach/InstructionsPage.jsx` (Config > Instructions, 2026-10-28) is the radar's
+  own page, mounted by `main.jsx` inside the vendored layout. Not vendored: it reuses the
+  vendored pages' Tailwind class vocabulary only. Agent proposals reach the Pipeline page
+  as TEACH-n tickets through `data-provider.js`; no file in `app/` changed for them.
 - `src/verbatim/brand.js` is the brand constant (app name; the original has no logo).
 - `tailwind.config.js` reuses the vendored config and only adds `./src` to its content.
 

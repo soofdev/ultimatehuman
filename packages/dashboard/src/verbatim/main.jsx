@@ -1,7 +1,7 @@
 // Entry of the vendored pages (app/, copied verbatim from the reference app).
 // It plays the part of the Next.js server: run the layout and page server
-// components once, then mount what they return. Two pages exist here, the
-// two the sidebar lists; any other /administration path opens an empty layout.
+// components once, then mount what they return. Three pages exist here, the
+// three the sidebar lists; any other /administration path opens an empty layout.
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import '@/app/globals.css';
@@ -9,8 +9,10 @@ import { init } from './data-provider';
 import AdminLayout from '@/app/(app)/administration/layout';
 import ClaimsPage from '@/app/(app)/administration/claims/page';
 import PipelineLivePage from '@/app/(app)/administration/pipeline-live/page';
+import InstructionsPage from '../teach/InstructionsPage';
 
-const PAGES = { '/administration/claims': ClaimsPage, '/administration/pipeline-live': PipelineLivePage };
+// Config is the radar's own page (src/teach/, not vendored), inside the same layout.
+const PAGES = { '/administration/claims': ClaimsPage, '/administration/pipeline-live': PipelineLivePage, '/administration/config': () => <InstructionsPage /> };
 
 export async function mount(root) {
   await init();
