@@ -13,4 +13,8 @@
     sentry: { credentials: { authToken: "${SENTRY_AUTH_TOKEN}" } },
     github: { credentials: { token: "${GITHUB_TOKEN}", repo: "owner/repo" } },
   },
+  // Off by default. Each new finding arrives as a card photo; empty days send nothing.
+  // notifications: {
+  //   telegram: { enabled: true, credentials: { botToken: "${TELEGRAM_BOT_TOKEN}", chatId: "123456789" } },
+  // },
 }

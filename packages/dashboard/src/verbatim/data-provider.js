@@ -156,10 +156,24 @@ export async function init() {
   try {
     csrf = (await engine('/api/status')).csrf;
     await refresh();
+    focusFinding();
   } catch (e) {
     if (e instanceof EngineError && e.status === 401) window.location.replace('/');
     throw e;
   }
+}
+
+// ?finding=<id> (a notification link): the engine knows findings, the page knows
+// ticket keys, so turn it into the page's own ?focus=KEY before the page reads it.
+function focusFinding() {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get('finding');
+  if (!id) return;
+  const hit = [...cardOf].find(([, c]) => c.finding?.id === id);
+  params.delete('finding');
+  if (hit) params.set('focus', hit[0]);
+  const q = params.toString();
+  window.history.replaceState(null, '', `${window.location.pathname}${q ? `?${q}` : ''}`);
 }
 
 const lean = (value) => ({ lean: async () => value() });

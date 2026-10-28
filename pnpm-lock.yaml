@@ -32,6 +32,9 @@ importers:
       '@ultimatehuman/plugin-sentry':
         specifier: workspace:*
         version: link:../plugins/sentry
+      '@ultimatehuman/plugin-telegram':
+        specifier: workspace:*
+        version: link:../plugins/telegram
       '@ultimatehuman/sdk':
         specifier: workspace:*
         version: link:../sdk
@@ -117,6 +120,12 @@ importers:
         version: link:../../sdk
 
   packages/plugins/sentry:
+    dependencies:
+      '@ultimatehuman/sdk':
+        specifier: workspace:*
+        version: link:../../sdk
+
+  packages/plugins/telegram:
     dependencies:
       '@ultimatehuman/sdk':
         specifier: workspace:*

@@ -15,6 +15,7 @@
     "@ultimatehuman/sdk": "workspace:*",
     "@ultimatehuman/plugin-posthog": "workspace:*",
     "@ultimatehuman/plugin-sentry": "workspace:*",
-    "@ultimatehuman/plugin-github": "workspace:*"
+    "@ultimatehuman/plugin-github": "workspace:*",
+    "@ultimatehuman/plugin-telegram": "workspace:*"
   }
 }
