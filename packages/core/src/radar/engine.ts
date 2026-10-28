@@ -11,7 +11,7 @@ import { readOnlyHttp } from "../plugins/http";
 import { redact, hashUser } from "./redact";
 import { DraftSchema, ReviewSchema, ProposalsSchema, rootCausePrompt, adversarialPrompt, retrospectivePrompt, type Draft, type Review, type CodeContext, type TeamBriefs } from "./prompts";
 import { BRIEFS, type Instructions, type LoadedInstructions } from "../instructions/instructions";
-import { buildProposal, MAX_PROPOSALS_PER_RUN } from "../instructions/proposals";
+import { buildProposal, proposalFate, runFacts, MAX_PROPOSALS_PER_RUN } from "../instructions/proposals";
 import type { Cluster, RunRecord, StepEntry, PhaseEntry, RuledEntry } from "./types";
 
 export interface RadarDeps {
@@ -488,7 +488,10 @@ export class Radar {
     // Everything a proposal may cite, with a plain label for its card.
     const known = new Map<string, string>();
     const runs = store.listRuns(12).map((r) => (r.id === run.id ? run : r));
-    for (const r of runs) {
+    const facts = runFacts(runs, (id) => (store.getFinding(id) as any)?.clusterId);
+    // A pass that died mid-way proves nothing: it is named as such, never offered as evidence.
+    const dead = runs.filter((r) => facts.get(r.id)?.died);
+    for (const r of runs.filter((r) => !facts.get(r.id)?.died)) {
       known.set(r.id, `${r.trigger === "schedule" ? "Daily" : r.trigger === "onboarding" ? "First" : "Manual"} pass of ${shortDate(r.startedAt)}`);
       for (const x of [...(r.clusters ?? []), ...(r.dropped ?? []).map((d) => ({ id: d.clusterId, title: d.title ?? d.clusterTitle })), ...(r.ruled ?? []).map((d) => ({ id: d.clusterId, title: d.clusterTitle }))])
         if (!known.has(x.id)) known.set(x.id, x.title);
@@ -518,18 +521,22 @@ export class Radar {
     if (!human.length) rl.push("- none yet");
     const props = store.listProposals(30);
     rl.push("", "## Proposals already made (never repeat one; a rejected one needs NEW evidence)");
-    for (const p of props) rl.push(`- ${p.status}: "${p.title}" on ${p.brief}.md${p.rulings.at(-1)?.reason ? ` - your human said: "${p.rulings.at(-1)!.reason}"` : ""}`);
+    const versions = this.d.instructions.versions();
+    for (const p of props) rl.push(`- ${proposalFate(p, versions) ?? p.status}: "${p.title}" on ${p.brief}.md${p.rulings.at(-1)?.reason ? ` - your human said: "${p.rulings.at(-1)!.reason}"` : ""}`);
     if (!props.length) rl.push("- none yet");
     writeFileSync(join(rdir, "rulings.md"), redact(rl.join("\n")) + "\n");
 
     const hist = new Map<string, string[]>();
     for (const r of [...runs].reverse()) {
+      if (facts.get(r.id)!.died) continue;
       const day = shortDate(r.startedAt);
+      const feed = facts.get(r.id)!.feed;
       for (const d of r.dropped ?? []) hist.set(d.clusterId, [...(hist.get(d.clusterId) ?? []), `${day} ${r.id}: dropped at ${d.stage} (${d.usersAffected ?? "?"} users)`]);
       for (const x of r.ruled ?? []) hist.set(x.clusterId, [...(hist.get(x.clusterId) ?? []), `${day} ${r.id}: ${x.outcome}`]);
-      for (const c of r.clusters ?? []) if (!(r.dropped ?? []).some((d) => d.clusterId === c.id)) hist.set(c.id, [...(hist.get(c.id) ?? []), `${day} ${r.id}: reached the feed`]);
+      for (const c of feed) hist.set(c, [...(hist.get(c) ?? []), `${day} ${r.id}: reached the feed`]);
     }
     const hl = ["# Recent passes, per item (oldest first)", ""];
+    if (dead.length) hl.push(`Passes that died mid-way and prove nothing (never cite them): ${dead.map((r) => `${r.id} (${facts.get(r.id)!.died!.slice(0, 80)})`).join(", ")}.`, "");
     for (const [cid, xs] of hist) hl.push(`## ${cid} "${known.get(cid) ?? "?"}"`, ...xs.map((x) => `- ${x}`), "");
     writeFileSync(join(rdir, "history.md"), redact(hl.join("\n")) + "\n");
 
@@ -553,9 +560,10 @@ export class Radar {
     const ids: string[] = [];
     const refused: string[] = [];
     for (const d of (out as { proposals: any[] }).proposals.slice(0, MAX_PROPOSALS_PER_RUN)) {
-      const b = buildProposal(d, base, run.id, known);
+      const b = buildProposal(d, base, run.id, known, facts);
       if (!b.ok) {
         refused.push(b.reason);
+        this.d.log(`run ${run.id} retrospective: proposal refused by the script: ${b.reason}`);
         continue;
       }
       if (existing.some((p) => p.id === b.proposal.id || (p.brief === b.proposal.brief && p.after === b.proposal.after && p.status !== "rejected"))) {

@@ -18,8 +18,12 @@
 //   Answer B, Cancel ticket -> POST /api/rulings dismiss, the text is the reason
 //   Answer C               -> POST /api/rulings park
 //   instruction proposal, pending -> queue 'decision' (TEACH-n): A Apply / B Reject / C Not now
-//   proposal parked / applied / rejected or stale -> 'decision' answered C / 'shipped' / 'cancelled'
+//   proposal parked                -> 'decision' unanswered again (A/B/C back), "parked on <date>" in its context
+//   proposal applied / rejected or stale -> 'shipped' / 'cancelled'
+//   TEACH card extras (src/teach/proposal-cards.jsx): the change as a red/green diff, answer copy in proposal words
 //   validation gate, merge, building, manual, bundles, flags, chat -> none: no fix legs in this radar.
+
+import { enhanceTeachCards } from '../teach/proposal-cards';
 
 let csrf = '';
 let feed = null;
@@ -52,6 +56,7 @@ const lastAt = (card) => historyAts(card).pop() || firstAt(card);
 const repoOf = () => feed?.output?.repo || '';
 // "vincent38wargnier/jalsa" -> "JALSA": the tickets read like a tracker's keys (JALSA-1)
 const keyPrefix = () => (repoOf().split('/').pop() || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^[^A-Z]+/, '') || 'BUG';
+const when = (v) => new Date(v).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const day = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '?');
 
 const OPTIONS = () => [
@@ -144,6 +149,9 @@ const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
 function proposalDecision(p) {
   const file = BRIEF_FILE[p.brief] || p.brief;
   const next = (feed?.instructionsVersion || p.baseVersion) + 1;
+  const last = p.rulings[p.rulings.length - 1];
+  const removed = p.diff.filter((l) => l.op === '-').length;
+  const added = p.diff.filter((l) => l.op === '+').length;
   return {
     question: `Teach your radar: ${p.title}. Apply this change to ${file}?`,
     options: [
@@ -153,14 +161,15 @@ function proposalDecision(p) {
     ],
     recommendation: '',
     context: [
+      p.status === 'parked' && `You parked it on ${when(last.at)}. Apply, Reject or keep it parked.${last.reason ? ` Your note: "${last.reason}"` : ''}`,
       `The gap: ${p.gap}`,
       ...p.evidence.map((e) => `Evidence: ${e.label} (${e.ref}): ${e.what}`),
-      ...p.diff.map((l) => `${l.op === '+' ? 'Added' : 'Removed'} line in ${file}: ${l.text.trim() || '(blank line)'}`),
+      `The change to ${file}: ${removed} line${removed === 1 ? '' : 's'} removed, ${added} added (red and green, under the question).`,
       ...p.edits.map((e) => `Why: ${e.because}`),
       `Expected effect: ${p.expectedEffect}`,
       `Size of ${file}: about ${p.tokensBefore} to ${p.tokensAfter} tokens (${signed(p.tokensAfter - p.tokensBefore)}), read on every agent step.`,
       `Drafted by the retrospective of ${p.runId} on instructions v${p.baseVersion}. It never applies itself.`,
-    ],
+    ].filter(Boolean),
   };
 }
 
@@ -194,8 +203,8 @@ function proposalTicket(p, key) {
     const why = p.status === 'rejected' ? `You rejected it: ${last.reason}` : `Not applied: ${last.reason}`;
     return { ...base, queue: 'cancelled', cancelled_at: last.at, cancel: { reason: why, requested_at: last.at, acked_at: last.at, ack_error: null } };
   }
-  const answer = p.status === 'parked' ? { option: 'C', text: last.reason || '', answered_at: last.at, acked_at: last.at, ack_error: null } : null;
-  return { ...base, queue: 'decision', decision: proposalDecision(p), answer };
+  // pending or parked: the A/B/C form stays (a parked proposal is still yours to apply)
+  return { ...base, queue: 'decision', decision: proposalDecision(p), answer: null };
 }
 
 async function refresh() {
@@ -213,6 +222,14 @@ async function refresh() {
 const tickets = () => [...[...cardOf].map(([key, c]) => toTicket(c, key)), ...[...proposalOf].map(([key, p]) => proposalTicket(p, key))];
 
 const PROPOSAL_RULING = { A: 'apply', B: 'reject', C: 'park' };
+const answerCopy = new Map(); // TEACH key -> what your last answer did, in proposal words
+
+function proposalAnswerCopy(p, version) {
+  if (p.status === 'applied') return `Saved as instructions v${version ?? '?'}: the next pass reads it. Config > Instructions reverts it in one tap.`;
+  if (p.status === 'rejected') return 'Rejected. The next retrospectives read your reason and do not propose it again without new evidence.';
+  if (p.status === 'stale') return 'Not applied: the brief changed since this was drafted.';
+  return 'Parked. Nothing changes meanwhile; it stays in Needs decision with its options.';
+}
 
 async function answerProposal(key, option, why) {
   const p = proposalOf.get(key);
@@ -220,10 +237,13 @@ async function answerProposal(key, option, why) {
   const ruling = PROPOSAL_RULING[option];
   if (!ruling) return json(400, { error: 'Pick A, B or C: Apply, Reject or Not now.' });
   if (ruling === 'reject' && !why) return json(400, { error: 'Say why in the box: the next retrospectives read your reason.' });
-  await engine(`/api/proposals/${encodeURIComponent(p.id)}/rule`, { ruling, reason: why });
+  const res = await engine(`/api/proposals/${encodeURIComponent(p.id)}/rule`, { ruling, reason: why });
   await refresh();
+  answerCopy.set(key, proposalAnswerCopy(res.proposal || proposalOf.get(key), res.version));
   const at = new Date().toISOString();
-  return json(200, { ticket: { ...before, answer: { option, text: why, answered_at: at, acked_at: at, ack_error: null } } });
+  // a park is not final: "Change my answer" stays, so Apply is one tap away without a reload
+  const acked = ruling === 'park' ? null : at;
+  return json(200, { ticket: { ...before, answer: { option, text: why, answered_at: at, acked_at: acked, ack_error: null } } });
 }
 
 /** When the radar last reported: the running pass's latest phase, else the last pass's end. */
@@ -337,6 +357,11 @@ function relink(root) {
 }
 new MutationObserver((records) => records.forEach((r) => r.addedNodes.forEach((n) => n.nodeType === 1 && relink(n.parentNode || n))))
   .observe(document.documentElement, { childList: true, subtree: true });
+
+enhanceTeachCards({
+  proposalOf: (key) => proposalOf.get(key),
+  answerCopy: (key) => answerCopy.get(key) || 'Recorded on the proposal.',
+});
 
 // The radar's own pages under /administration (src/teach/) call the engine through the same signed-in helper.
 export { engine as engineCall };

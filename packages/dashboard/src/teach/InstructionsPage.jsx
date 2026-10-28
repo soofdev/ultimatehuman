@@ -19,7 +19,7 @@ const passName = (r) => {
   return r.trigger === 'onboarding' ? `First pass (${span})` : r.trigger === 'schedule' ? `Daily ${span} pass` : `${span[0].toUpperCase()}${span.slice(1)} pass`;
 };
 
-function Diff({ lines, file }) {
+export function Diff({ lines, file }) {
   const changed = lines.filter((l) => l.op !== '=');
   if (!changed.length) return <p className="text-sm text-gray-500">No change yet.</p>;
   return (

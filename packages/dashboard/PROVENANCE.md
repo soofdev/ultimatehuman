@@ -40,6 +40,11 @@ What makes them run outside Next.js (none of it inside `app/`):
   own page, mounted by `main.jsx` inside the vendored layout. Not vendored: it reuses the
   vendored pages' Tailwind class vocabulary only. Agent proposals reach the Pipeline page
   as TEACH-n tickets through `data-provider.js`; no file in `app/` changed for them.
+- `src/teach/proposal-cards.jsx` (2026-10-28) decorates the rendered TEACH-n cards only, at
+  runtime, without editing `app/`: it mounts the Config page's red/green `Diff` under the
+  question, and swaps the vendored AnswerStatus fix sentence ("The fix resumes on the next
+  pipeline run.") for the proposal's own outcome. Same technique as the Jira-link relink
+  in `data-provider.js`.
 - `src/verbatim/brand.js` is the brand constant (app name; the original has no logo).
 - `tailwind.config.js` reuses the vendored config and only adds `./src` to its content.
 
