@@ -7,7 +7,7 @@ import type { Store } from "../store/store";
  * the admission decision + the dashboard meter. Estimates per step kind are a
  * rolling p75 of observed window deltas, seeded until 5 samples exist.
  */
-const SEED_PCT: Record<string, number> = { probe: 0.2, root_cause: 2, adversarial: 1 };
+const SEED_PCT: Record<string, number> = { probe: 0.2, root_cause: 2, adversarial: 1, retrospective: 1 };
 
 export interface AdmitResult {
   admit: boolean;
@@ -16,6 +16,8 @@ export interface AdmitResult {
   ceilingPct: number;
   resumeAt: string | null;
   reason?: string;
+  /** The limit that rejected the account, when one did. */
+  limit?: string;
 }
 
 export class WindowTracker {
@@ -64,7 +66,9 @@ export class WindowTracker {
     const ceiling = 100 - this.humanReservePct;
     const used = r?.fiveHourPct ?? null;
     const resumeAt = r?.fiveHourResetsAt ? new Date(r.fiveHourResetsAt * 1000).toISOString() : r?.resetsAt ? new Date(r.resetsAt * 1000).toISOString() : null;
-    if (r?.status === "rejected") return { admit: false, usedPct: used, estimatePct: est, ceilingPct: ceiling, resumeAt, reason: "window_exhausted" };
+    // A rejected reading names the limit that was hit (five_hour, seven_day...): resume at that limit's reset, not the 5-hour one.
+    if (r?.status === "rejected")
+      return { admit: false, usedPct: used, estimatePct: est, ceilingPct: ceiling, resumeAt: r.resetsAt ? new Date(r.resetsAt * 1000).toISOString() : resumeAt, reason: "window_exhausted", ...(r.rateLimitType ? { limit: r.rateLimitType } : {}) };
     // Unknown utilization: admit one small step at a time and re-read after it (SPEC 5.2).
     if (used === null) return { admit: true, usedPct: null, estimatePct: est, ceilingPct: ceiling, resumeAt };
     if (used + est <= ceiling) return { admit: true, usedPct: used, estimatePct: est, ceilingPct: ceiling, resumeAt };

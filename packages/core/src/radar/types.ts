@@ -1,7 +1,7 @@
 import type { RunPhase, Signal } from "@ultimatehuman/sdk";
 
 export interface PhaseEntry {
-  phase: RunPhase | "gating";
+  phase: RunPhase | "gating" | "retrospective";
   status: "running" | "done" | "skipped" | "failed";
   startedAt: string;
   endedAt?: string;
@@ -11,7 +11,7 @@ export interface PhaseEntry {
 export interface StepEntry {
   clusterId: string;
   clusterTitle: string;
-  step: "root_cause" | "gate" | "adversarial" | "dedupe";
+  step: "root_cause" | "gate" | "adversarial" | "dedupe" | "retrospective";
   status: "queued" | "running" | "passed" | "dropped" | "failed" | "parked";
   startedAt?: string;
   endedAt?: string;
@@ -85,6 +85,10 @@ export interface RunRecord {
   costUsd: number;
   /** Read-only repo checkout the agents could read for this run, if one was connected. */
   code?: { path: string; commit?: string; repo?: string };
+  /** The instruction set this run read (SPEC 7b): fixed at trigger time, so a resumed run keeps its version. */
+  instructions?: { version: number; at: string; note: string; minUsersAffected: number; tokens: number };
+  /** What the post-run retrospective did: proposal ids it put in the cockpit, or why it did not run. */
+  retrospective?: { status: "proposed" | "nothing" | "skipped" | "failed"; note: string; proposalIds: string[] };
   /** Checkpoint: index of the next cluster to root-cause (resume after park/crash). */
   nextCluster: number;
   signals?: Signal[];

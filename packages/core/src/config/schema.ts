@@ -108,7 +108,7 @@ export const ConfigSchema = z
         firstPassLookbackHours: z.number().int().min(1).max(24 * 14).default(168)
           .describe("The onboarding pass looks further back so a new install has enough data to judge on day one"),
         minUsersAffected: z.number().int().min(1).default(2)
-          .describe("Precision floor: a finding must touch at least this many users"),
+          .describe("Precision floor: a finding must touch at least this many users. Seeds instructions/admission.md on first boot; from then on that brief (editable in the cockpit) is the floor in force"),
         maxFindingsPerRun: z.number().int().min(1).max(20).default(5),
         autoFile: z.boolean().default(false).describe("v1 default: a human clicks File to GitHub"),
         retentionDays: z.number().int().min(1).default(30).describe("Run bundles older than this are pruned"),

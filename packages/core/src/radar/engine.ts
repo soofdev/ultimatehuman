@@ -9,7 +9,9 @@ import type { WindowTracker } from "../governor/tracker";
 import { runClaude, extractJson, type ClaudeRunResult } from "../runner/claude";
 import { readOnlyHttp } from "../plugins/http";
 import { redact, hashUser } from "./redact";
-import { DraftSchema, ReviewSchema, rootCausePrompt, adversarialPrompt, type Draft, type Review, type CodeContext } from "./prompts";
+import { DraftSchema, ReviewSchema, ProposalsSchema, rootCausePrompt, adversarialPrompt, retrospectivePrompt, type Draft, type Review, type CodeContext, type TeamBriefs } from "./prompts";
+import { BRIEFS, type Instructions, type LoadedInstructions } from "../instructions/instructions";
+import { buildProposal, MAX_PROPOSALS_PER_RUN } from "../instructions/proposals";
 import type { Cluster, RunRecord, StepEntry, PhaseEntry, RuledEntry } from "./types";
 
 export interface RadarDeps {
@@ -20,6 +22,7 @@ export interface RadarDeps {
   resolveCredentials: (pluginId: string) => Promise<Record<string, string>>;
   runnerEnv: () => Promise<Record<string, string>>;
   tracker: WindowTracker;
+  instructions: Instructions;
   emit: (ev: ServerEvent | { type: string; [k: string]: unknown }) => void;
   log: (msg: string) => void;
   model?: string;
@@ -30,6 +33,7 @@ const now = () => new Date().toISOString();
 export class Radar {
   private active: RunRecord | null = null;
   private parkTimer: NodeJS.Timeout | null = null;
+  private loaded = new Map<number, LoadedInstructions>();
 
   constructor(private readonly d: RadarDeps) {}
 
@@ -63,6 +67,12 @@ export class Radar {
       costUsd: 0,
       nextCluster: 0,
     };
+    // Hot-load the instruction set (SPEC 7b): this run reads exactly this version, even if it parks and resumes after an edit.
+    const cur = this.d.instructions.current();
+    const ins = this.d.instructions.load(cur.version);
+    run.instructions = { version: ins.version, at: ins.at, note: ins.note, minUsersAffected: ins.knobs.minUsersAffected, tokens: ins.tokens };
+    run.notes.push(`Ran with instructions v${ins.version} (${shortDate(ins.at)}: ${ins.note}). Users-affected floor ${ins.knobs.minUsersAffected}; briefs ≈${ins.tokens} tokens.`);
+    if (cur.warning) run.notes.push(`Instructions: ${cur.warning}.`);
     const code = codeContext(cfg);
     if (code) {
       run.code = code;
@@ -81,12 +91,39 @@ export class Radar {
         this.active = r;
         this.d.tracker.parkedUntil = r.parkedUntil;
         this.armPark(r);
+      } else if (r.phase === "ready" && !r.finishedAt) {
+        // Interrupted during its retrospective: the findings are already in; close the pass without it.
+        r.retrospective = { status: "failed", note: "the engine restarted during the retrospective; skipped for this pass", proposalIds: [] };
+        r.phase = "done";
+        r.finishedAt = now();
+        this.save(r);
       } else if (r.phase === "root_causing") {
         this.d.log(`resuming interrupted run ${r.id} at cluster ${r.nextCluster}`);
         this.active = r;
         void this.rootCauseLoop(r).catch((e) => this.fail(r, e));
       }
     }
+  }
+
+  /** The instruction set a run reads (fixed at trigger). Runs from before instructions existed read v1. */
+  private ins(run: RunRecord): LoadedInstructions {
+    const v = run.instructions?.version ?? 1;
+    let l = this.loaded.get(v);
+    if (!l) {
+      const rec = this.d.instructions.get(v) ?? this.d.instructions.current().version;
+      l = this.d.instructions.load(rec);
+      this.loaded.set(v, l);
+    }
+    return l;
+  }
+
+  private floor(run: RunRecord): number {
+    return run.instructions?.minUsersAffected ?? this.d.getConfig().radar.minUsersAffected;
+  }
+
+  private briefs(run: RunRecord): TeamBriefs {
+    const l = this.ins(run);
+    return { version: l.version, bodies: l.bodies };
   }
 
   private save(run: RunRecord): void {
@@ -104,7 +141,7 @@ export class Radar {
   private phaseStart(run: RunRecord, phase: PhaseEntry["phase"], note?: string): PhaseEntry {
     const p: PhaseEntry = { phase, status: "running", startedAt: now(), ...(note ? { note } : {}) };
     run.phases.push(p);
-    if (phase !== "gating") run.phase = phase as RunRecord["phase"];
+    if (phase !== "gating" && phase !== "retrospective") run.phase = phase as RunRecord["phase"];
     this.save(run);
     return p;
   }
@@ -179,11 +216,11 @@ export class Radar {
     const pr = this.phaseStart(run, "correlating");
     const all = correlate(signals);
     const clusters = this.applyRulings(run, all);
-    const floor = cfg.radar.minUsersAffected;
+    const floor = this.floor(run);
     const keep: Cluster[] = [];
     for (const c of clusters) {
       if (c.usersAffected < floor) {
-        run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "floor", reason: `${c.usersAffected} user${c.usersAffected === 1 ? "" : "s"} affected, below the ${floor}-user floor`, usersAffected: c.usersAffected, at: now() });
+        run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "floor", reason: `${c.usersAffected} user${c.usersAffected === 1 ? "" : "s"} affected, below the ${floor}-user floor (instructions v${run.instructions?.version ?? 1})`, usersAffected: c.usersAffected, at: now() });
       } else keep.push(c);
     }
     const cap = cfg.radar.maxFindingsPerRun * 2;
@@ -223,8 +260,12 @@ export class Radar {
     this.d.emit({ type: "window.updated", window: this.d.tracker.status() });
     this.phaseEnd(run, pr, `${run.findings} finding${run.findings === 1 ? "" : "s"} passed the gate`);
     const pd = this.phaseStart(run, "ready");
-    if (run.findings === 0) run.emptyReason = emptyReason(run, cfg.radar.minUsersAffected);
+    if (run.findings === 0) run.emptyReason = emptyReason(run, this.floor(run));
     this.phaseEnd(run, pd, run.findings ? `${run.findings} in the feed` : "honest empty result");
+    if (!run.retrospective) await this.retrospective(run).catch((e) => {
+      run.retrospective = { status: "failed", note: `retrospective failed: ${(e as Error).message}`, proposalIds: [] };
+      this.d.log(`run ${run.id} retrospective failed: ${(e as Error).message}`);
+    });
     run.phase = "done";
     run.finishedAt = now();
     this.save(run);
@@ -269,7 +310,7 @@ export class Radar {
   }
 
   /** Runs one governor-admitted agent step; returns null when parked. */
-  private async agent(run: RunRecord, s: StepEntry, kind: "root_cause" | "adversarial", prompt: string, cwd: string, resumeSessionId?: string): Promise<ClaudeRunResult | null> {
+  private async agent(run: RunRecord, s: StepEntry, kind: AgentKind, prompt: string, cwd: string, resumeSessionId?: string): Promise<ClaudeRunResult | null> {
     const cfg = this.d.getConfig();
     const tr = this.d.tracker;
     if (tr.isStale(cfg.governor.staleAfterMin)) {
@@ -279,7 +320,13 @@ export class Radar {
     }
     const adm = tr.admit(kind);
     if (!adm.admit) {
-      this.park(run, s, adm.resumeAt, `window ${adm.usedPct}% used + ~${adm.estimatePct}% for this step > ${adm.ceilingPct}% ceiling (your ${100 - adm.ceilingPct}% reserve); resumes at reset`);
+      const why =
+        adm.reason === "window_exhausted"
+          ? `the account's ${(adm.limit ?? "usage").replace("_", "-")} limit is reached (Claude rejects new requests)`
+          : `window ${adm.usedPct}% used + ~${adm.estimatePct}% for this step > ${adm.ceilingPct}% ceiling (your ${100 - adm.ceilingPct}% reserve)`;
+      // The retrospective is optional: it is skipped, never parked, so a finished pass never waits on it.
+      if (kind === "retrospective") this.endStep(run, s, "parked", `${why}; skipped for this pass`);
+      else this.park(run, s, adm.resumeAt, `${why}; resumes at reset`);
       return null;
     }
     const before = tr.reading()?.fiveHourPct;
@@ -310,7 +357,8 @@ export class Radar {
     });
     this.d.emit({ type: "window.updated", window: tr.status() });
     if (res.limitHit) {
-      this.park(run, s, tr.status().resetsAt, "usage limit hit mid-step; result discarded, resumes at reset");
+      if (kind === "retrospective") this.endStep(run, s, "parked", "usage limit hit mid-step; result discarded, skipped for this pass");
+      else this.park(run, s, tr.status().resetsAt, "usage limit hit mid-step; result discarded, resumes at reset");
       return null;
     }
     return res;
@@ -319,7 +367,7 @@ export class Radar {
   private async parseWithRepair<T>(
     run: RunRecord,
     s: StepEntry,
-    kind: "root_cause" | "adversarial",
+    kind: AgentKind,
     res: ClaudeRunResult,
     cwd: string,
     schema: { safeParse: (x: unknown) => { success: boolean; data?: T; error?: { message: string } } },
@@ -349,7 +397,7 @@ export class Radar {
 
     // root-cause
     const s1 = this.step(run, c, "root_cause");
-    const r1 = await this.agent(run, s1, "root_cause", rootCausePrompt(cfg.radar.minUsersAffected, run.code), cdir);
+    const r1 = await this.agent(run, s1, "root_cause", rootCausePrompt(this.floor(run), this.briefs(run), run.code), cdir);
     if (!r1) return true;
     if (!r1.ok) {
       this.endStep(run, s1, "failed", r1.error ?? "agent failed");
@@ -373,7 +421,7 @@ export class Radar {
 
     // deterministic gate
     const s2 = this.step(run, c, "gate");
-    const gate = deterministicGate(draft, bundle, c, cfg.radar.minUsersAffected, run.code);
+    const gate = deterministicGate(draft, bundle, c, this.floor(run), run.code);
     if (!gate.ok) {
       this.endStep(run, s2, "dropped", gate.reason);
       run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "gate", reason: gate.reason, usersAffected: c.usersAffected, title: draft.title ?? "", at: now() });
@@ -383,7 +431,7 @@ export class Radar {
 
     // adversarial
     const s3 = this.step(run, c, "adversarial");
-    const r3 = await this.agent(run, s3, "adversarial", adversarialPrompt(JSON.stringify(draft, null, 2), run.code), cdir);
+    const r3 = await this.agent(run, s3, "adversarial", adversarialPrompt(JSON.stringify(draft, null, 2), this.briefs(run), run.code), cdir);
     if (!r3) return true;
     const review = r3.ok ? await this.parseWithRepair<Review>(run, s3, "adversarial", r3, cdir, ReviewSchema as any) : null;
     if (review === "parked") return true;
@@ -416,6 +464,114 @@ export class Radar {
     this.save(run);
     this.d.emit({ type: "finding.new", finding });
     return false;
+  }
+
+  /**
+   * Retrospective (SPEC 7b.2): one governor-admitted agent step after the pass. It reads the
+   * briefs this run used, what the pass did, your rulings and recent history, and may draft up to
+   * MAX_PROPOSALS_PER_RUN amendments. The script vets each one (buildProposal); the survivors
+   * become cockpit cards that wait for your ruling. It never writes an instruction.
+   */
+  private async retrospective(run: RunRecord): Promise<void> {
+    const store = this.d.store;
+    const ins = this.ins(run);
+    const base = this.d.instructions.get(ins.version) ?? this.d.instructions.current().version;
+    if (!run.dropped.length && !run.ruled?.length && !run.findings) {
+      run.retrospective = { status: "skipped", note: "nothing to learn from: this pass saw no cluster", proposalIds: [] };
+      return;
+    }
+    const ph = this.phaseStart(run, "retrospective", `reads instructions v${ins.version}`);
+    const rdir = join(this.runDir(run), "retro");
+    mkdirSync(join(rdir, "instructions"), { recursive: true, mode: 0o700 });
+    for (const b of BRIEFS) writeFileSync(join(rdir, "instructions", b.file), base.briefs[b.id]);
+
+    // Everything a proposal may cite, with a plain label for its card.
+    const known = new Map<string, string>();
+    const runs = store.listRuns(12).map((r) => (r.id === run.id ? run : r));
+    for (const r of runs) {
+      known.set(r.id, `${r.trigger === "schedule" ? "Daily" : r.trigger === "onboarding" ? "First" : "Manual"} pass of ${shortDate(r.startedAt)}`);
+      for (const x of [...(r.clusters ?? []), ...(r.dropped ?? []).map((d) => ({ id: d.clusterId, title: d.title ?? d.clusterTitle })), ...(r.ruled ?? []).map((d) => ({ id: d.clusterId, title: d.clusterTitle }))])
+        if (!known.has(x.id)) known.set(x.id, x.title);
+    }
+    const human = store.allRulings().filter((r) => r.by === "you");
+    for (const r of human) if (!known.has(r.clusterId) && r.title) known.set(r.clusterId, r.title);
+
+    const md: string[] = [`# This pass: ${run.id}`, "", `Window: ${run.window.from} to ${run.window.to}. ${run.signalsCollected} signals. Instructions v${ins.version}, users-affected floor ${this.floor(run)}.`, "", "## Clusters investigated by agents"];
+    for (const c of run.clusters) md.push(`- ${c.id} "${c.title}": ${c.usersAffected} users, ${c.occurrences} occurrences, trend ${c.trend}`);
+    if (!run.clusters.length) md.push("- none");
+    md.push("", "## Dropped (stage: reason)");
+    for (const d of run.dropped) md.push(`- ${d.clusterId} "${d.title ?? d.clusterTitle}" (${d.usersAffected ?? "?"} users) at ${d.stage}: ${d.reason}`);
+    if (!run.dropped.length) md.push("- none");
+    md.push("", "## Settled by standing rulings before any agent ran");
+    for (const x of run.ruled ?? []) md.push(`- ${x.clusterId} "${x.clusterTitle}": ${x.outcome}. ${x.note}`);
+    if (!run.ruled?.length) md.push("- none");
+    md.push("", "## Findings that reached the feed");
+    for (const id of run.findingIds) {
+      const f = store.getFinding(id) as any;
+      if (f) md.push(`- ${f.clusterId} "${f.title}": ${f.impact.usersAffected} users, review ${f.review?.verdict ?? "?"}`);
+    }
+    if (!run.findingIds.length) md.push("- none");
+    writeFileSync(join(rdir, "run.md"), redact(md.join("\n")) + "\n");
+
+    const rl: string[] = ["# Your human's rulings (oldest first)", "", "file = confirmed as a real bug, dismiss = not a bug (reason given), park = not now, clear = ruling withdrawn.", ""];
+    for (const r of human.slice(-40)) rl.push(`- ${r.at.slice(0, 16)} ${r.clusterId} "${r.title ?? known.get(r.clusterId) ?? "?"}": ${r.ruling}${r.reason ? ` - "${r.reason}"` : ""}${r.usersAtRuling !== undefined ? ` (${r.usersAtRuling} users at the time)` : ""}`);
+    if (!human.length) rl.push("- none yet");
+    const props = store.listProposals(30);
+    rl.push("", "## Proposals already made (never repeat one; a rejected one needs NEW evidence)");
+    for (const p of props) rl.push(`- ${p.status}: "${p.title}" on ${p.brief}.md${p.rulings.at(-1)?.reason ? ` - your human said: "${p.rulings.at(-1)!.reason}"` : ""}`);
+    if (!props.length) rl.push("- none yet");
+    writeFileSync(join(rdir, "rulings.md"), redact(rl.join("\n")) + "\n");
+
+    const hist = new Map<string, string[]>();
+    for (const r of [...runs].reverse()) {
+      const day = shortDate(r.startedAt);
+      for (const d of r.dropped ?? []) hist.set(d.clusterId, [...(hist.get(d.clusterId) ?? []), `${day} ${r.id}: dropped at ${d.stage} (${d.usersAffected ?? "?"} users)`]);
+      for (const x of r.ruled ?? []) hist.set(x.clusterId, [...(hist.get(x.clusterId) ?? []), `${day} ${r.id}: ${x.outcome}`]);
+      for (const c of r.clusters ?? []) if (!(r.dropped ?? []).some((d) => d.clusterId === c.id)) hist.set(c.id, [...(hist.get(c.id) ?? []), `${day} ${r.id}: reached the feed`]);
+    }
+    const hl = ["# Recent passes, per item (oldest first)", ""];
+    for (const [cid, xs] of hist) hl.push(`## ${cid} "${known.get(cid) ?? "?"}"`, ...xs.map((x) => `- ${x}`), "");
+    writeFileSync(join(rdir, "history.md"), redact(hl.join("\n")) + "\n");
+
+    const s = this.step(run, { id: "retro", title: "Retrospective: should the instructions change?" } as Cluster, "retrospective");
+    const res = await this.agent(run, s, "retrospective", retrospectivePrompt(ins.version, MAX_PROPOSALS_PER_RUN), rdir);
+    if (!res) {
+      run.retrospective = { status: "skipped", note: s.note ?? "not admitted by the window governor", proposalIds: [] };
+      this.phaseEnd(run, ph, run.retrospective.note, "skipped");
+      return;
+    }
+    const out = res.ok ? await this.parseWithRepair(run, s, "retrospective", res, rdir, ProposalsSchema as any) : null;
+    if (out === "parked" || !out) {
+      const why = out === "parked" ? "not admitted for its repair turn" : `no valid answer: ${res.error ?? "the answer failed schema validation twice"}`;
+      this.endStep(run, s, "failed", why);
+      run.retrospective = { status: "failed", note: why, proposalIds: [] };
+      this.phaseEnd(run, ph, why, "failed");
+      return;
+    }
+    writeFileSync(join(rdir, "proposals.json"), JSON.stringify(out, null, 2));
+    const existing = store.listProposals(200);
+    const ids: string[] = [];
+    const refused: string[] = [];
+    for (const d of (out as { proposals: any[] }).proposals.slice(0, MAX_PROPOSALS_PER_RUN)) {
+      const b = buildProposal(d, base, run.id, known);
+      if (!b.ok) {
+        refused.push(b.reason);
+        continue;
+      }
+      if (existing.some((p) => p.id === b.proposal.id || (p.brief === b.proposal.brief && p.after === b.proposal.after && p.status !== "rejected"))) {
+        refused.push(`"${b.proposal.title}": already in your cockpit`);
+        continue;
+      }
+      store.saveProposal(b.proposal);
+      ids.push(b.proposal.id);
+      this.d.emit({ type: "proposal.new", proposal: b.proposal });
+    }
+    const n = ids.length;
+    const note = n ? `${n} proposal${n === 1 ? "" : "s"} to amend the instructions, waiting for your ruling in Needs decision` : "no change proposed";
+    this.endStep(run, s, "passed", note);
+    run.retrospective = { status: n ? "proposed" : "nothing", note, proposalIds: ids };
+    run.notes.push(`Retrospective: ${note}.${refused.length ? ` Refused by the script: ${refused.join("; ")}.` : ""}`);
+    this.phaseEnd(run, ph, note);
   }
 
   /**
@@ -542,6 +698,8 @@ export class Radar {
     return { evidence: ev };
   }
 }
+
+type AgentKind = "root_cause" | "adversarial" | "retrospective";
 
 interface Bundle {
   evidence: Map<string, { id: string; url: string; kind: Evidence["kind"]; text: string }>;

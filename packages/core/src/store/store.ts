@@ -25,7 +25,41 @@ const MIGRATIONS: string[] = [
   `CREATE TABLE rulings (id INTEGER PRIMARY KEY AUTOINCREMENT, cluster_id TEXT NOT NULL, ruling TEXT NOT NULL,
      reason TEXT, at TEXT NOT NULL, by TEXT NOT NULL, json TEXT NOT NULL);
    CREATE INDEX rulings_cluster ON rulings(cluster_id, id);`,
+  // Agent proposals to amend the instruction briefs (SPEC 7b). The human's rulings on them live in the json (history).
+  `CREATE TABLE proposals (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, brief TEXT NOT NULL, status TEXT NOT NULL,
+     created_at TEXT NOT NULL, json TEXT NOT NULL);`,
 ];
+
+export interface ProposalRuling {
+  ruling: "apply" | "reject" | "park";
+  reason: string | null;
+  at: string;
+  by: "you";
+  /** The instruction version an apply produced. */
+  version?: number;
+}
+
+export interface Proposal {
+  id: string;
+  runId: string;
+  brief: string;
+  /** pending = waiting for your ruling; stale = the brief changed so the edit no longer applies. */
+  status: "pending" | "applied" | "rejected" | "parked" | "stale";
+  createdAt: string;
+  title: string;
+  gap: string;
+  evidence: { ref: string; what: string; label?: string }[];
+  edits: { find: string; replace: string; because: string }[];
+  expectedEffect: string;
+  /** Instruction version the proposal was drafted against, and the brief text it produces on it. */
+  baseVersion: number;
+  before: string;
+  after: string;
+  diff: { op: "=" | "+" | "-"; text: string }[];
+  tokensBefore: number;
+  tokensAfter: number;
+  rulings: ProposalRuling[];
+}
 
 export type RulingKind = "file" | "dismiss" | "park" | "clear" | "resurfaced";
 
@@ -159,6 +193,21 @@ export class Store {
       runId: r.run_id,
       data: JSON.parse(r.json),
     }));
+  }
+
+  saveProposal(p: Proposal): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO proposals(id,run_id,brief,status,created_at,json) VALUES(?,?,?,?,?,?)")
+      .run(p.id, p.runId, p.brief, p.status, p.createdAt, JSON.stringify(p));
+  }
+
+  getProposal(id: string): Proposal | undefined {
+    const r = this.db.prepare("SELECT json FROM proposals WHERE id=?").get(id) as { json: string } | undefined;
+    return r ? (JSON.parse(r.json) as Proposal) : undefined;
+  }
+
+  listProposals(limit = 50): Proposal[] {
+    return (this.db.prepare("SELECT json FROM proposals ORDER BY created_at DESC LIMIT ?").all(limit) as { json: string }[]).map((r) => JSON.parse(r.json) as Proposal);
   }
 
   getKv<T>(key: string): T | undefined {

@@ -12,6 +12,8 @@ import { Radar, publicRun } from "./radar/engine";
 import { renderIssue } from "./radar/issue";
 import { startServer, type RunningServer } from "./server/http";
 import { buildCockpit, backfillFindingClusters } from "./cockpit";
+import { Instructions, InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, estimateTokens, validateBrief, type BriefId } from "./instructions/instructions";
+import { ruleProposal } from "./instructions/proposals";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -41,6 +43,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const store = new Store(home);
   const backfilled = backfillFindingClusters(store);
   if (backfilled) log(`linked ${backfilled} older finding${backfilled === 1 ? "" : "s"} to ${backfilled === 1 ? "its" : "their"} cluster`);
+  // Instruction briefs (SPEC 7b): provisioned by the engine on boot; radar.minUsersAffected only seeds the first version.
+  const instructions = new Instructions(home, () => ({ minUsersAffected: config.radar.minUsersAffected }));
+  instructions.ensure();
   const src = config.auth.sources[0]!;
   const tracker = new WindowTracker(store, src.id, src.kind === "anthropic_api_key" ? "api_key" : "subscription", config.governor.humanReservePct);
 
@@ -66,6 +71,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     resolveCredentials,
     runnerEnv,
     tracker,
+    instructions,
     emit,
     log,
     ...(process.env.ULTIMATEHUMAN_MODEL ? { model: process.env.ULTIMATEHUMAN_MODEL } : {}),
@@ -199,7 +205,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         }
         return { json: { ok: true } };
       },
-      "GET /api/cockpit": async () => ({ json: buildCockpit(store, radar.current(), dryRunOutput()) }),
+      "GET /api/cockpit": async () => ({ json: { ...buildCockpit(store, radar.current(), dryRunOutput()), proposals: store.listProposals(30), instructionsVersion: instructions.current().version.version } }),
       "POST /api/rulings": async (_r, body) => {
         const clusterId = String(body.clusterId ?? "");
         const ruling = String(body.ruling ?? "");
@@ -218,6 +224,79 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           steps: store.listUsage("step", 300).map((u) => ({ at: u.at, runId: u.runId, ...u.data })),
         },
       }),
+      "GET /api/instructions": async () => {
+        const cur = instructions.current();
+        const runs = store.listRuns(30);
+        const usedBy = (v: number) => runs.filter((r) => (r.instructions?.version ?? 0) === v).map((r) => ({ id: r.id, startedAt: r.startedAt, trigger: r.trigger, lookbackHours: r.lookbackHours }));
+        const vs = instructions.versions();
+        return {
+          json: {
+            version: cur.version.version,
+            ...(cur.warning ? { warning: cur.warning } : {}),
+            dir: instructions.dir,
+            briefs: BRIEFS.map((b) => ({ ...b, text: cur.version.briefs[b.id], tokens: estimateTokens(cur.version.briefs[b.id]) })),
+            rails: RAILS,
+            versions: vs.map((v, i) => {
+              const prev = vs[i + 1];
+              return {
+                version: v.version,
+                at: v.at,
+                by: v.by,
+                note: v.note,
+                changed: v.changed,
+                ...(v.revertOf ? { revertOf: v.revertOf } : {}),
+                ...(v.proposalId ? { proposalId: v.proposalId } : {}),
+                tokens: BRIEF_IDS.reduce((a, id) => a + estimateTokens(v.briefs[id]), 0),
+                diffs: prev ? v.changed.map((id) => ({ brief: id, diff: lineDiff(prev.briefs[id], v.briefs[id]).filter((l) => l.op !== "=") })) : [],
+                usedBy: usedBy(v.version),
+              };
+            }),
+          },
+        };
+      },
+      "POST /api/instructions/diff": async (_r, body) => {
+        const id = String(body.brief) as BriefId;
+        if (!BRIEF_IDS.includes(id)) return { status: 400, json: { error: "unknown brief" } };
+        const before = instructions.current().version.briefs[id];
+        const text = String(body.text ?? "");
+        return { json: { diff: lineDiff(before, text), tokensBefore: estimateTokens(before), tokensAfter: estimateTokens(text), error: validateBrief(id, text) } };
+      },
+      "POST /api/instructions": async (_r, body) => {
+        try {
+          const v = instructions.save(String(body.brief) as BriefId, String(body.text ?? ""), String(body.note ?? ""));
+          log(`instructions v${v.version} saved: ${v.note}`);
+          emit({ type: "instructions.updated", version: v.version });
+          return { json: { ok: true, version: v.version } };
+        } catch (e) {
+          return { status: e instanceof InstructionError ? e.status : 500, json: { error: (e as Error).message } };
+        }
+      },
+      "POST /api/instructions/revert": async (_r, body) => {
+        try {
+          const v = instructions.revert(Number(body.version), body.note ? String(body.note) : undefined);
+          log(`instructions v${v.version}: ${v.note}`);
+          emit({ type: "instructions.updated", version: v.version });
+          return { json: { ok: true, version: v.version } };
+        } catch (e) {
+          return { status: e instanceof InstructionError ? e.status : 500, json: { error: (e as Error).message } };
+        }
+      },
+      "GET /api/proposals": async () => ({ json: { proposals: store.listProposals(50) } }),
+      "POST /api/proposals/:id/rule": async (_r, body, p) => {
+        const ruling = String(body.ruling ?? "");
+        const reason = String(body.reason ?? "").trim();
+        if (!["apply", "reject", "park"].includes(ruling)) return { status: 400, json: { error: "ruling must be apply, reject or park" } };
+        if (reason.length > 500) return { status: 400, json: { error: "keep the reason under 500 characters" } };
+        try {
+          const out = ruleProposal(store, instructions, p.id!, ruling as "apply" | "reject" | "park", reason || null);
+          log(`proposal ${p.id}: ${ruling}${out.version ? ` -> instructions v${out.version.version}` : ""}${reason ? ` (${reason})` : ""}`);
+          emit({ type: "ruling", proposal: out.proposal });
+          if (out.version) emit({ type: "instructions.updated", version: out.version.version });
+          return { json: { ok: true, proposal: out.proposal, ...(out.version ? { version: out.version.version } : {}) } };
+        } catch (e) {
+          return { status: e instanceof InstructionError ? e.status : 500, json: { error: (e as Error).message } };
+        }
+      },
       "GET /api/config": async () => ({ json: { path: configPath, raw: await loadRawConfig(configPath), config, schema: configJsonSchema() } }),
     },
   });

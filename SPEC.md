@@ -342,6 +342,8 @@ POST /api/plugins/:id/probe           GET|PATCH /api/config    GET /api/doctor
 GET|POST /api/runs                    GET /api/findings        GET /api/findings/:id
 POST /api/findings/:id/file           POST /api/findings/:id/dismiss
 GET  /api/cockpit                     POST /api/rulings
+GET|POST /api/instructions            POST /api/instructions/diff   POST /api/instructions/revert
+GET  /api/proposals                   POST /api/proposals/:id/rule   (apply | reject | park)
 ```
 
 **WS** `/api/events` (cookie-authenticated) carries `run.phase`, `finding.new`, `finding.updated`, `ruling`, `window.updated` and `probe.result`.
