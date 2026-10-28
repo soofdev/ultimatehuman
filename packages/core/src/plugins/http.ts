@@ -63,8 +63,9 @@ export function outboundHttp(pluginId: string, hosts: readonly string[], log: (m
       const u = new URL(url);
       const allowed = hosts.includes(u.host) || hosts.includes(u.hostname);
       if (!allowed || (u.protocol !== "https:" && !(u.protocol === "http:" && LOOPBACK.test(u.host)))) {
-        log(`refused POST to ${u.hostname} for notify plugin ${pluginId}: not in sendHosts`);
-        throw new WriteRefusedError(`notify plugin ${pluginId} tried POST ${u.hostname}, which is not one of its sendHosts`);
+        const why = allowed ? "plain http is only allowed on loopback" : "not one of its sendHosts";
+        log(`refused POST to ${u.host} for notify plugin ${pluginId}: ${why}`);
+        throw new WriteRefusedError(`notify plugin ${pluginId} tried POST ${u.protocol}//${u.host}: ${why}`);
       }
       const form = typeof FormData !== "undefined" && body instanceof FormData;
       const r = await fetch(url, {

@@ -19,6 +19,8 @@
 //   Answer C               -> POST /api/rulings park
 //   validation gate, merge, building, manual, bundles, flags, chat -> none: no fix legs in this radar.
 
+import { cockpitHref, stageOf } from '@/app/lib/pipeline-live';
+
 let csrf = '';
 let feed = null;
 const keyOf = new Map(); // clusterId -> ticket key, stable for the page's life
@@ -164,16 +166,14 @@ export async function init() {
 }
 
 // ?finding=<id> (a notification link): the engine knows findings, the page knows
-// ticket keys, so turn it into the page's own ?focus=KEY before the page reads it.
+// ticket keys, so rewrite it to the link the live page itself would give that
+// ticket (its tab + ?focus=KEY) before the page reads the URL.
 function focusFinding() {
-  const params = new URLSearchParams(window.location.search);
-  const id = params.get('finding');
+  const id = new URLSearchParams(window.location.search).get('finding');
   if (!id) return;
-  const hit = [...cardOf].find(([, c]) => c.finding?.id === id);
-  params.delete('finding');
-  if (hit) params.set('focus', hit[0]);
-  const q = params.toString();
-  window.history.replaceState(null, '', `${window.location.pathname}${q ? `?${q}` : ''}`);
+  const key = [...cardOf].find(([, c]) => c.finding?.id === id)?.[0];
+  const ticket = key && tickets().find((t) => t.key === key);
+  window.history.replaceState(null, '', ticket ? cockpitHref(stageOf(ticket), key) : window.location.pathname);
 }
 
 const lean = (value) => ({ lean: async () => value() });

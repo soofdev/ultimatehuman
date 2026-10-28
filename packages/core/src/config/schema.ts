@@ -42,8 +42,12 @@ const PluginInstanceSchema = z.object({
   options: z.record(z.string(), z.unknown()).default({}),
 });
 
-const NotifierSchema = PluginInstanceSchema.extend({
+const TelegramNotifierSchema = PluginInstanceSchema.extend({
   enabled: z.boolean().default(false).describe("Off by default: nothing is sent until you turn it on"),
+  credentials: z.object({
+    botToken: SecretRef.describe("From BotFather. A ${ENV_VAR} ref, never the token itself"),
+    chatId: z.union([SecretRef, z.string().regex(/^-?\d+$/, "a numeric chat id")]),
+  }),
 });
 
 /** v2-ready: test environments the (future) QA executor may enter. Parsed and validated in v1, unused. */
@@ -126,7 +130,7 @@ export const ConfigSchema = z
     plugins: z.record(z.string(), PluginInstanceSchema).default({}),
     notifications: z
       .object({
-        telegram: NotifierSchema.optional().describe("Each new finding as a card photo; one quiet line per pass with findings; empty passes send nothing"),
+        telegram: TelegramNotifierSchema.optional().describe("Each new finding as a card photo; one quiet line per pass with findings; empty passes send nothing"),
         dashboardUrl: z.url().optional()
           .describe("Base URL used in notification links (e.g. a tailnet or tunnel address). Defaults to the local dashboard."),
       })
