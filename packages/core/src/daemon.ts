@@ -14,6 +14,7 @@ import { startServer, type RunningServer } from "./server/http";
 import { buildCockpit, backfillFindingClusters } from "./cockpit";
 import { Instructions, InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, estimateTokens, validateBrief, type BriefId } from "./instructions/instructions";
 import { ruleProposal } from "./instructions/proposals";
+import { Notifier } from "./notify/notifier";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -62,7 +63,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   };
 
   let server: RunningServer | null = null;
-  const emit = (ev: unknown) => server?.broadcast(ev);
+  const notifier = new Notifier({ plugins: opts.plugins, getConfig: () => config, configPath, log });
+  const emit = (ev: unknown) => {
+    server?.broadcast(ev);
+    notifier.handle(ev as any);
+  };
   const radar = new Radar({
     home,
     store,

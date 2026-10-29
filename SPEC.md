@@ -11,7 +11,7 @@ Governing metric: **time-to-wow**, the minutes from `npx ultimatehuman init` to 
 1. **The AI can look, never touch.**
    - Source credentials are read-only.
    - The only write in v1 is creating an issue in one configured GitHub repo, and commenting on issues it filed itself.
-   - No code writes, no deploys, no DB writes, no outbound messages.
+   - No code writes, no deploys, no DB writes, no outbound messages to anyone but the user (the opt-in notifier, §8.5, posts only to the user's own chat).
 2. **Evidence or silence.**
    - A finding exists only if every required evidence field (§7) is filled from data read during that run, with a deep link.
    - "No clear problems found" is a first-class result, shown verbatim.
@@ -25,7 +25,8 @@ Governing metric: **time-to-wow**, the minutes from `npx ultimatehuman init` to 
 5. **Nothing leaves the machine except:**
    - calls to the user's own trackers (read);
    - calls to Claude (via the user's own login or key);
-   - the issue it files on GitHub.
+   - the issue it files on GitHub;
+   - when the user turns it on, notifications to the user's own chat (§8.5).
    - There is no telemetry, phone-home, or hosted component in v1.
 
 ## 2. Architecture
@@ -59,7 +60,7 @@ Source of truth: `packages/sdk/src/plugin.ts`. Summary:
 
 ```ts
 interface PluginManifest {
-  id: string; displayName: string; kind: "source" | "output";
+  id: string; displayName: string; kind: "source" | "output" | "notify";
   newcomerScore: number;            // 0-100, wizard offers easiest first
   requiredScopes: readonly string[]; // minimum read scopes; doctor warns on broader tokens
   credentials: readonly CredentialField[];
@@ -352,6 +353,20 @@ GET  /api/proposals                   POST /api/proposals/:id/rule   (apply | re
 
 v2 adds a React embed kit (`@ultimatehuman/react`) that renders the same pages inside an existing admin app, against a remote daemon URL.
 
+### 8.5 Notifier v1: Telegram (`packages/plugins/telegram`)
+
+A `notify` plugin tells the user that something happened. It never decides and never acts on the product.
+
+- **Contract** (`NotifyPlugin` in the SDK): the standard manifest, `sendHosts` (the only hosts it may POST to; the engine's outbound wrapper refuses any other), an optional `hostOption` (a user-chosen server, e.g. a self-hosted Bot API server), `probe`, and `notify.send(ctx, event)`.
+- **Credentials:** bot token (secret, `${TELEGRAM_BOT_TOKEN}`, help link to BotFather) + chat id (`TELEGRAM_CHAT_ID`).
+- **Live probe:** `getMe` (names the bot) + one probe message to the chat. `init` runs it when both env vars are present and prints `✓ Telegram  @bot · probe message sent to chat <id>`; interactive init asks first.
+- **Config:** `notifications.telegram { enabled, credentials, options }`. `enabled` defaults to **false**; init writes `true` only after a passing probe. `notifications.dashboardUrl` sets the base of the links (default: the local dashboard).
+- **Events, one message each, in order:**
+  - `finding.new` → the finding's dashboard card (the same `FindingCard` markup, page `/render/finding-card`, finding passed in the URL fragment) photographed by the Chrome/Chromium already on the machine over the DevTools protocol, sent as a photo with a 2-line caption (severity + title; people, occurrences, trend, confidence) and a link to `/administration/claims?finding=<id>`. No browser found: the same caption as text, and the log says why.
+  - a pass that ends with findings, or fails → one quiet line (`disable_notification`).
+  - a pass that ends with no findings → **nothing**. The log records `honest empty pass, nothing sent` with the empty reason. An empty day is not news.
+- Options: `findings`, `runSummaries` (both default on), `prefix` (text before every message), `apiUrl`.
+
 ## 9. Security model
 
 | Asset | Rule |
@@ -435,4 +450,4 @@ produces: [account]          # what later playbooks can rely on
 - Hosted SaaS.
 - Team accounts / RBAC.
 - Non-GitHub trackers as output.
-- Slack/Telegram notifications. These are post-v1 via a notifier interface; the dashboard inbox comes first.
+- Slack/email notifications. Telegram ships as the first notifier (§8.5); others plug into the same interface.

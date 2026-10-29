@@ -17,7 +17,8 @@ const USAGE = `ultimatehuman <command>
   stop        Stop the engine started by init
   service     install | uninstall | status (systemd user unit / launchd agent)
 
-Every interactive step has a flag (init: --project <posthog id>, --repo owner/name);
+Every interactive step has a flag (init: --project <posthog id>, --repo owner/name,
+--notify-prefix <text>, --notify-server <url>);
 pass --non-interactive to take the detected defaults instead of prompting.`;
 
 async function main(argv: string[]): Promise<number> {
@@ -33,6 +34,8 @@ async function main(argv: string[]): Promise<number> {
       config: { type: "string" },
       project: { type: "string" },
       repo: { type: "string" },
+      "notify-prefix": { type: "string" },
+      "notify-server": { type: "string" },
     },
   });
   const flags = {
@@ -41,6 +44,8 @@ async function main(argv: string[]): Promise<number> {
     fix: values.fix === true,
     ...(typeof values.project === "string" ? { project: values.project } : {}),
     ...(typeof values.repo === "string" ? { repo: values.repo } : {}),
+    ...(typeof values["notify-prefix"] === "string" ? { notifyPrefix: values["notify-prefix"] } : {}),
+    ...(typeof values["notify-server"] === "string" ? { notifyServer: values["notify-server"] } : {}),
   };
   switch (command) {
     case "init":

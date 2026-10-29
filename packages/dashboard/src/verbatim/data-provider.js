@@ -24,6 +24,7 @@
 //   validation gate, merge, building, manual, bundles, flags, chat -> none: no fix legs in this radar.
 
 import { enhanceTeachCards } from '../teach/proposal-cards';
+import { cockpitHref, stageOf } from '@/app/lib/pipeline-live';
 
 let csrf = '';
 let feed = null;
@@ -259,10 +260,22 @@ export async function init() {
   try {
     csrf = (await engine('/api/status')).csrf;
     await refresh();
+    focusFinding();
   } catch (e) {
     if (e instanceof EngineError && e.status === 401) window.location.replace('/');
     throw e;
   }
+}
+
+// ?finding=<id> (a notification link): the engine knows findings, the page knows
+// ticket keys, so rewrite it to the link the live page itself would give that
+// ticket (its tab + ?focus=KEY) before the page reads the URL.
+function focusFinding() {
+  const id = new URLSearchParams(window.location.search).get('finding');
+  if (!id) return;
+  const key = [...cardOf].find(([, c]) => c.finding?.id === id)?.[0];
+  const ticket = key && tickets().find((t) => t.key === key);
+  window.history.replaceState(null, '', ticket ? cockpitHref(stageOf(ticket), key) : window.location.pathname);
 }
 
 const lean = (value) => ({ lean: async () => value() });

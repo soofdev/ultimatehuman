@@ -10,7 +10,7 @@
 
 import type { Finding } from "./finding";
 
-export type PluginKind = "source" | "output";
+export type PluginKind = "source" | "output" | "notify";
 
 export interface CredentialField {
   /** Key inside `plugins.<id>.credentials` in the config file. */
@@ -173,4 +173,50 @@ export interface OutputPlugin extends PluginBase {
   output: OutputAdapter;
 }
 
-export type Plugin = SourcePlugin | OutputPlugin;
+/**
+ * Notify plugins tell a human that something happened. They never decide
+ * anything and never act on the product. Off by default (`notifications.<id>`
+ * in the config); they may only POST to the hosts in `sendHosts`.
+ */
+export type NotifyEvent =
+  | {
+      type: "finding.new";
+      finding: Finding;
+      /** PNG of the dashboard's finding card, rendered on this machine. Absent when no headless browser was found. */
+      card?: Uint8Array;
+      /** Dashboard link that opens this finding. */
+      url: string;
+    }
+  | {
+      type: "run.summary";
+      /** One plain line, e.g. "Radar pass done: 1 new finding, 4 dropped". */
+      line: string;
+      url: string;
+    };
+
+export interface NotifyContext extends PluginContext {
+  /** POST to one of the plugin's `sendHosts` (JSON or multipart). Any other host throws. */
+  send: OutboundHttp;
+}
+
+export interface OutboundHttp {
+  post(url: string, body: unknown | FormData, init?: { headers?: Record<string, string> }): Promise<HttpResponse>;
+}
+
+export interface NotifyAdapter {
+  /** Exactly one message per event. */
+  send(ctx: NotifyContext, event: NotifyEvent): Promise<void>;
+}
+
+export interface NotifyPlugin extends Omit<PluginBase, "probe"> {
+  manifest: PluginManifest & { kind: "notify" };
+  /** Hosts this plugin may POST to, e.g. "api.telegram.org". */
+  sendHosts: readonly string[];
+  /** Option holding a user-chosen server that replaces the default host (e.g. a self-hosted Bot API server). */
+  hostOption?: string;
+  /** The live probe may send one probe message, so it gets `send` too. */
+  probe(ctx: NotifyContext): Promise<ProbeResult>;
+  notify: NotifyAdapter;
+}
+
+export type Plugin = SourcePlugin | OutputPlugin | NotifyPlugin;

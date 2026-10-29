@@ -3,8 +3,8 @@ import { openSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { ensureHome, controlKey, homeId, writeConfig, defaultConfigPath, runClaude, claudeBin, readOnlyHttp, type RateLimitReading } from "@ultimatehuman/core";
-import type { Plugin, ProbeResult } from "@ultimatehuman/sdk";
+import { ensureHome, controlKey, homeId, writeConfig, defaultConfigPath, runClaude, claudeBin, readOnlyHttp, outboundHttp, notifyHosts, type RateLimitReading } from "@ultimatehuman/core";
+import type { NotifyPlugin, Plugin, ProbeResult } from "@ultimatehuman/sdk";
 import { bundledPlugins } from "../plugins";
 import type { GlobalFlags } from "../flags";
 import { banner, section, line, spin, ask, choose, closePrompts, c } from "../ui";
@@ -116,6 +116,9 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
       found[p.manifest.id] = { env: hit.name, value: hit.value };
       line.ok(p.manifest.displayName, `key found in ${c.bold("$" + hit.name)}`);
       add({ id: `${p.manifest.id}.detect`, label: p.manifest.displayName, status: "ok", summary: `Key found in $${hit.name}` });
+    } else if (p.manifest.kind === "notify") {
+      line.skip(p.manifest.displayName, `no $${secret.preferredEnv} · optional: new findings as cards in your chat, bot from ${secret.helpUrl}`);
+      add({ id: `${p.manifest.id}.detect`, label: p.manifest.displayName, status: "missing", summary: `No $${secret.preferredEnv}. Optional: notifications stay off.`, helpUrl: secret.helpUrl });
     } else if (p.manifest.kind === "output") {
       line.skip(p.manifest.displayName, `no $${secret.preferredEnv}: issues will be previewed, never created (dry run)`);
       add({ id: `${p.manifest.id}.detect`, label: p.manifest.displayName, status: "missing", summary: `No $${secret.preferredEnv}: dry run, issues are previewed and never created`, helpUrl: secret.helpUrl });
@@ -215,6 +218,40 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
   if (!Object.keys(pluginConfig).length) return 1;
   mark("probe_sources");
 
+  // Notifiers stay off unless their keys are exported and the live probe (which posts one message) passes.
+  const notifications: Record<string, any> = {};
+  for (const p of bundledPlugins.filter((x): x is NotifyPlugin => x.manifest.kind === "notify" && !!found[x.manifest.id])) {
+    const secret = p.manifest.credentials.find((f) => f.secret)!;
+    const others = p.manifest.credentials.filter((f) => !f.secret);
+    const missing = others.filter((f) => !f.optional && !findEnv([f.preferredEnv, ...(f.alternateEnv ?? [])]));
+    if (missing.length) {
+      line.skip(p.manifest.displayName, `$${found[p.manifest.id]!.env} found, no $${missing[0]!.preferredEnv}: notifications stay off · ${missing[0]!.helpText}`);
+      add({ id: `${p.manifest.id}.probe`, label: p.manifest.displayName, status: "missing", summary: `No $${missing[0]!.preferredEnv}: notifications stay off`, helpUrl: missing[0]!.helpUrl });
+      continue;
+    }
+    const plain: Record<string, string> = Object.fromEntries(others.map((f) => [f.key, findEnv([f.preferredEnv, ...(f.alternateEnv ?? [])])?.value ?? ""]));
+    if (!flags.nonInteractive) {
+      const yes = (await ask(`Send new findings to ${p.manifest.displayName} (chat ${Object.values(plain).join(" ")})? It posts one probe message now. [Y/n]`, "Y")).trim().toLowerCase();
+      if (yes.startsWith("n")) {
+        line.skip(p.manifest.displayName, "notifications off (your answer)");
+        continue;
+      }
+    }
+    const options = { ...(flags.notifyPrefix ? { prefix: flags.notifyPrefix } : {}), ...(flags.notifyServer && p.hostOption ? { [p.hostOption]: flags.notifyServer } : {}) };
+    const log = () => {};
+    const ctx = { credentials: { [secret.key]: found[p.manifest.id]!.value, ...plain }, options, http: readOnlyHttp(p.manifest.id, [], log), send: outboundHttp(p.manifest.id, notifyHosts(p, options), log), log, signal: new AbortController().signal };
+    const res = await spin(p.manifest.displayName, "checking the bot and posting one probe message", () => p.probe(ctx));
+    probeResults[p.manifest.id] = res;
+    if (!res.ok) {
+      line.err(p.manifest.displayName, `${res.summary}${res.fix ? ` · ${res.fix}` : ""}`);
+      add({ id: `${p.manifest.id}.probe`, label: p.manifest.displayName, status: "fail", summary: res.summary, ...(res.fix ? { detail: res.fix } : {}) });
+      continue;
+    }
+    line.ok(p.manifest.displayName, `${res.summary} ${c.muted("· each new finding arrives as a card; empty days send nothing")}`);
+    add({ id: `${p.manifest.id}.probe`, label: p.manifest.displayName, status: "ok", summary: res.summary, detail: "Each new finding arrives as a card photo. A pass with findings sends one quiet line; an empty pass sends nothing." });
+    notifications[p.manifest.id] = { enabled: true, credentials: { [secret.key]: `\${${found[p.manifest.id]!.env}}`, ...plain }, options };
+  }
+
   const repoDefault = process.env.ULTIMATEHUMAN_GITHUB_REPO ?? gitRemoteRepo();
   console.log("");
   const repo = flags.repo ?? (flags.nonInteractive ? repoDefault ?? "" : await ask("GitHub repo for issues (owner/name):", repoDefault));
@@ -256,6 +293,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     governor: { humanReservePct: 30 },
     radar: { schedule: "0 7 * * *", lookbackHours: 24, firstPassLookbackHours: 168, minUsersAffected: 2, maxFindingsPerRun: 3, autoFile: false, ...(codePath ? { repo: { path: codePath } } : {}) },
     plugins: pluginConfig,
+    ...(Object.keys(notifications).length ? { notifications } : {}),
   };
   const path = defaultConfigPath();
   await writeConfig(config, path, "// ultimatehuman config. Secrets are ${ENV_VAR} references only; values never touch this file.\n// Edit by hand, with `ultimatehuman config set`, or in the dashboard. Every path validates first.");
