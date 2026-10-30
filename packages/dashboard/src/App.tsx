@@ -142,7 +142,7 @@ export function App() {
             <CockpitClient s={state} />
           </>
         ) : (
-          <div className="legacy">
+          <div className={page === "chat" ? "legacy legacy-full" : "legacy"}>
             <header className="topbar">
               <div className="crumb">
                 {cur.label}
@@ -150,13 +150,17 @@ export function App() {
               </div>
               <WindowPill w={status?.window} />
             </header>
-            <div className="content">
-              {page === "setup" && <Setup s={state} land={land} />}
-              {page === "runs" && <Runs s={state} />}
-              {page === "usage" && <Usage s={state} />}
-              {page === "config" && <ConfigPage />}
-              {page === "chat" && <ChatPage />}
-            </div>
+            {/* The chat is a full-height messenger, not a boxed page. */}
+            {page === "chat" ? (
+              <ChatPage />
+            ) : (
+              <div className="content">
+                {page === "setup" && <Setup s={state} land={land} />}
+                {page === "runs" && <Runs s={state} />}
+                {page === "usage" && <Usage s={state} />}
+                {page === "config" && <ConfigPage />}
+              </div>
+            )}
           </div>
         )}
       </main>
