@@ -18,6 +18,9 @@ import { Instructions, InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, est
 import { ruleProposal } from "./instructions/proposals";
 import { Notifier } from "./notify/notifier";
 import { gradeSetup, gradeProbes } from "./setup/grade";
+import { setupStatusText } from "./setup/pending";
+import { checkPending, currentGrade } from "./setup/concierge";
+import { loadEngineEnv } from "./envfile";
 import { Chat, mergePatch } from "./chat/chat";
 import { ChatTelegram } from "./chat/telegram";
 import { allowedFile, fileType, saveToInbox, sentNote } from "./chat/files";
@@ -40,6 +43,8 @@ export interface DaemonOptions {
  */
 export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const home = ensureHome();
+  // Secrets init saved to engine.env (an exported variable wins); re-read every minute by the pending check.
+  loadEngineEnv();
   const configPath = defaultConfigPath();
   let config: Config = await loadConfig(configPath);
   const loopback = ["127.0.0.1", "::1", "localhost"].includes(config.server.host);
@@ -154,6 +159,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     return config;
   };
 
+  const gradeDeps = { getConfig: () => config, readRawConfig: () => loadRawConfig(configPath), plugins: opts.plugins };
+  const scopesByPlugin = Object.fromEntries(opts.plugins.map((p) => [p.manifest.id, p.manifest.requiredScopes]));
   const chat = new Chat({
     home,
     store,
@@ -165,6 +172,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     runnerEnv,
     emit,
     log,
+    setupStatus: async () => setupStatusText(config, await currentGrade(gradeDeps), scopesByPlugin),
   });
   /** The only places chat files may be served or sent from: the install home and the configured repos. */
   const chatRoots = () => [home, ...config.repos.map((r) => r.path)];
@@ -375,7 +383,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       },
       "GET /api/setup-grade": async () => {
         const raw = JSON5.parse(await loadRawConfig(configPath)) as Record<string, any>;
-        return { json: gradeSetup(config, raw, gradeProbes(config)) };
+        return { json: { ...gradeSetup(config, raw, gradeProbes(config, opts.plugins.filter((p) => p.manifest.kind === "source").map((p) => p.manifest.id))), pending: config.pending ?? [] } };
       },
       "GET /api/features": async () => {
         const props = ((configJsonSchema() as any).properties?.features?.properties ?? {}) as Record<string, { description?: string }>;
@@ -445,9 +453,35 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   });
   // Minimal daily cron ("M H * * *").
   const cron = /^(\d+)\s+(\d+)\s+\*\s+\*\s+\*$/.exec(config.radar.schedule);
+  // Pending ledger: once a minute on the same tick (plus once at boot), clear what got done and say so.
+  let checking = false;
+  const pendingCheck = () => {
+    if (checking) return;
+    checking = true;
+    void checkPending({
+      store,
+      plugins: opts.plugins,
+      getConfig: () => config,
+      readRawConfig: () => loadRawConfig(configPath),
+      patchConfig,
+      configPath,
+      log,
+      announce: async (text) => {
+        const msg = store.addChat({ role: "assistant", text, source: "dashboard" });
+        emit({ type: "chat.message", message: msg });
+        emit({ type: "config.updated" });
+        await chatTelegram.push(text).catch((e) => log(`chat telegram: upgrade note not sent: ${(e as Error).message}`));
+      },
+    })
+      .catch((e) => log(`pending check failed: ${(e as Error).message}`))
+      .finally(() => (checking = false));
+  };
+  setTimeout(pendingCheck, 3000);
+  let ticks = 0;
   const tick = setInterval(() => {
     const d = new Date();
     if (cron && d.getMinutes() === Number(cron[1]) && d.getHours() === Number(cron[2]) && d.getSeconds() < 30) radar.trigger("schedule");
+    if (++ticks % 2 === 0) pendingCheck();
   }, 30_000);
   writeFileSync(join(home, "engine.pid"), String(process.pid));
   log(`daemon up on ${config.server.host}:${config.server.port} (pid ${process.pid})`);

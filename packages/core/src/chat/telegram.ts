@@ -33,6 +33,16 @@ export class ChatTelegram {
     this.abort.abort();
   }
 
+  /** Proactive message to the bound chat (no-op while the door is off or no chat is bound yet). */
+  async push(text: string): Promise<boolean> {
+    const tg = this.d.getConfig().chat?.telegram;
+    const chatId = this.d.store.getKv<number>("chat.telegram.chatId");
+    if (!tg?.enabled || !tg.botToken || chatId === undefined) return false;
+    const token = await resolveSecretRefs(tg.botToken as SecretRefValue, this.d.configPath);
+    await this.call(tg.apiBase, token, "sendMessage", { chat_id: chatId, text: text.slice(0, 4000) }, 15_000);
+    return true;
+  }
+
   private async call(base: string, token: string, method: string, body: unknown, timeoutMs: number): Promise<any> {
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(timeoutMs)]);
     const r = await fetch(`${base.replace(/\/+$/, "")}/bot${token}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });

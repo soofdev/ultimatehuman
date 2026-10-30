@@ -428,6 +428,23 @@ function GradePanel({ grade }) {
           </div>
         )}
       </article>
+      {grade.pending?.length > 0 && (
+        <article data-pending-ledger className={CARD}>
+          <h2 className="text-base font-semibold text-gray-900">Pending ({grade.pending.length})</h2>
+          <p className="mt-1 text-sm text-gray-600">Skipped at install. The engine clears each one when it is done and says so in the Chat.</p>
+          <ul className="mt-3 divide-y divide-gray-100">
+            {grade.pending.map((p) => (
+              <li key={p.id} data-pending={p.id} className="py-2.5">
+                <p className="text-sm font-medium text-gray-900">
+                  {p.label} {p.tier && <span className={`${PILL} ${TIER[p.tier].cls}`}>{TIER[p.tier].label}</span>}
+                </p>
+                <p className="text-xs text-gray-600">{p.why}</p>
+                <p className="text-xs text-gray-500">→ {p.unlock}</p>
+              </li>
+            ))}
+          </ul>
+        </article>
+      )}
       <article className={CARD}>
         <ul className="divide-y divide-gray-100">
           {grade.checks.map((c) => (

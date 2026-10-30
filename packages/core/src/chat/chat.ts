@@ -29,7 +29,12 @@ To change the config, end your reply with ONE fenced block tagged config-patch h
 \`\`\`config-patch
 { "features": { "validationGate": true } }
 \`\`\`
-The daemon validates and applies it, then tells the user what changed (or why it was refused). Never put a secret value in a patch: secrets must be "\${ENV_VAR}" references. Only patch what the user asked for. Be brief: short sentences, no tables.`;
+The daemon validates and applies it, then tells the user what changed (or why it was refused). Never put a secret value in a patch: secrets must be "\${ENV_VAR}" references. Only patch what the user asked for. Be brief: short sentences, no tables.
+Setup status: each message also carries the setup grade (Bronze → Silver → Gold → Platinum), what unlocks the next tier, and the PENDING LEDGER — what init skipped and why it matters. You are the concierge for it:
+- "What's missing?" → list each pending item: what it is, the tier it helps reach (say plainly whether it moves the grade now), and the one next step. Lead with what unlocks the next tier.
+- Keys held by someone else (an admin, a platform team) → offer, or when asked write, a short copy-paste request the user can send: what it is for (a read-only bug radar that only reads, never writes), the EXACT read-only scopes from the ledger and nothing broader, and how to hand it over (they run \`ultimatehuman key <ENV_NAME>\` on the install machine, or give it to the user to run). Never ask anyone to paste a secret into this chat, and never ask for write scopes.
+- Never ask the user to paste a secret here: secrets go into the engine env file with \`ultimatehuman key <ENV_NAME>\`. The engine checks every minute; when a pending key appears it probes it read-only, switches the source on, clears the item and posts the new grade here itself.
+- You may set non-secret items yourself with a config-patch (e.g. a repo's testUrl, a feature flag). The engine clears the matching pending entry on its next check; do not edit "pending" by hand unless the user asks to drop an item.`;
 
 export type ApplyPatch = (patch: Record<string, unknown>) => Promise<void>;
 
@@ -42,6 +47,8 @@ export interface ChatDeps {
   runnerEnv: () => Promise<Record<string, string>>;
   emit: (ev: unknown) => void;
   log: (m: string) => void;
+  /** Setup grade + pending ledger, as plain text for the prompt. */
+  setupStatus?: () => Promise<string>;
 }
 
 /** Deep merge for config patches: objects merge, everything else replaces, null deletes. */
@@ -95,7 +102,7 @@ export class Chat {
     const promptHash = createHash("sha256").update(system).digest("hex").slice(0, 16);
     const resume = this.d.store.getKv<string>(PROMPT_KEY) === promptHash ? this.d.store.getKv<string>(SESSION_KEY) : undefined;
     const model = cfg.models?.chat ?? DEFAULT_MODEL;
-    const prompt = `[door: ${source} · this chat runs on ${model}, set by models.chat · model stages: ${MODEL_STAGES.map((st) => st.id).join(", ")}; unset stages default to ${DEFAULT_MODEL}]\n\nCurrent config file:\n\`\`\`json5\n${await this.d.readRawConfig()}\`\`\`\n\nUser: ${text}`;
+    const prompt = `[door: ${source} · this chat runs on ${model}, set by models.chat · model stages: ${MODEL_STAGES.map((st) => st.id).join(", ")}; unset stages default to ${DEFAULT_MODEL}]\n\n${this.d.setupStatus ? `${await this.d.setupStatus().catch(() => "Setup status: unavailable")}\n\n` : ""}Current config file:\n\`\`\`json5\n${await this.d.readRawConfig()}\`\`\`\n\nUser: ${text}`;
     const env = await this.d.runnerEnv();
     const run = (resumeId?: string) => runClaude({
       prompt,
