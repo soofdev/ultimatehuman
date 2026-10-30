@@ -74,6 +74,33 @@ export function migrateConfig(raw: unknown): unknown {
   return raw;
 }
 
+/** Models the Config page offers. Any other id is accepted from the file (the claude CLI decides). */
+export const MODEL_CHOICES = [
+  { id: "claude-opus-5-5", label: "Opus 5.5", note: "advised, default" },
+  { id: "claude-fable-5-1", label: "Fable 5.1", note: "" },
+  { id: "claude-sonnet-5", label: "Sonnet 5", note: "" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", note: "" },
+] as const;
+export const DEFAULT_MODEL = "claude-opus-5-5";
+
+/** One model per leg type. `used` = a leg this build runs today; the others are reserved for the fix loop. */
+export const MODEL_STAGES = [
+  { id: "radar", label: "Radar (root cause)", used: true },
+  { id: "review", label: "Adversarial review", used: true },
+  { id: "retrospective", label: "Retrospective (teach proposals)", used: true },
+  { id: "intake", label: "Intake", used: false },
+  { id: "bundle", label: "Bundle", used: false },
+  { id: "fix", label: "Fix", used: false },
+  { id: "exam", label: "Exam (hostile check)", used: false },
+  { id: "chat", label: "Ticket chat", used: false },
+] as const;
+export type ModelStage = (typeof MODEL_STAGES)[number]["id"];
+
+const modelId = z.string().regex(/^[A-Za-z0-9._\[\]-]+$/, "a model id like claude-opus-5-5").default(DEFAULT_MODEL);
+const ModelsSchema = z
+  .object(Object.fromEntries(MODEL_STAGES.map((st) => [st.id, modelId.describe(`Model for the ${st.label} leg${st.used ? "" : " (not run by this build yet)"}`)])) as Record<ModelStage, typeof modelId>)
+  .prefault({});
+
 /** v2-ready: test environments the (future) QA executor may enter. Parsed and validated in v1, unused. */
 const EnvironmentSchema = z.object({
   name: z.string(),
@@ -151,6 +178,7 @@ export const ConfigSchema = z
           .prefault({}),
       })
       .prefault({}),
+    models: ModelsSchema.describe("Model per leg type. Defaults to claude-opus-5-5 everywhere."),
     repos: z.array(RepoSchema).default([])
       .describe("Local checkouts the agents read (and later fix) code in. Each repo keeps its own git/GitHub auth; nothing here is a credential."),
     plugins: z.record(z.string(), PluginInstanceSchema).default({}),

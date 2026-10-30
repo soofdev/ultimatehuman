@@ -3,8 +3,9 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Finding, Plugin } from "@ultimatehuman/sdk";
 import type { Config } from "./config/schema";
-import { configJsonSchema } from "./config/schema";
-import { loadConfig, loadRawConfig, defaultConfigPath, resolveSecretRefs, type SecretRefValue } from "./config/load";
+import JSON5 from "json5";
+import { configJsonSchema, MODEL_CHOICES, MODEL_STAGES, DEFAULT_MODEL } from "./config/schema";
+import { loadConfig, loadRawConfig, writeConfig, defaultConfigPath, resolveSecretRefs, type SecretRefValue } from "./config/load";
 import { ensureHome, controlKey } from "./home";
 import { Store } from "./store/store";
 import { WindowTracker } from "./governor/tracker";
@@ -137,6 +138,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const dryRunOutput = () => {
     const o = output();
     return { dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true, repo: o ? String(config.plugins[o.manifest.id]?.credentials?.repo ?? "") : "" };
+  };
+
+  /** Dashboard edits: patch the file as written (not the defaulted config), validate, write, and use it at once. */
+  const patchConfig = async (patch: (raw: Record<string, any>) => void) => {
+    const raw = JSON5.parse(await loadRawConfig(configPath)) as Record<string, any>;
+    patch(raw);
+    config = await writeConfig(raw, configPath, "// ultimatehuman config. Secrets are ${ENV_VAR} references only. Edited from the dashboard; every write validates first.");
+    emit({ type: "config.updated" });
+    return config;
   };
 
   server = await startServer({
@@ -307,6 +317,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           return { json: { ok: true, proposal: out.proposal, ...(out.version ? { version: out.version.version } : {}) } };
         } catch (e) {
           return { status: e instanceof InstructionError ? e.status : 500, json: { error: (e as Error).message } };
+        }
+      },
+      "GET /api/models": async () => ({ json: { stages: MODEL_STAGES, choices: MODEL_CHOICES, default: DEFAULT_MODEL, models: config.models, envOverride: process.env.ULTIMATEHUMAN_MODEL ?? null } }),
+      "POST /api/config/models": async (_r, body) => {
+        const known = new Set<string>(MODEL_STAGES.map((st) => st.id));
+        const entries = Object.entries(body ?? {}).filter(([k, v]) => known.has(k) && typeof v === "string");
+        if (!entries.length) return { status: 400, json: { error: "send { <stage>: <model id> }" } };
+        try {
+          const c = await patchConfig((raw) => (raw.models = { ...(raw.models ?? {}), ...Object.fromEntries(entries) }));
+          log(`models updated: ${entries.map(([k, v]) => `${k}=${v}`).join(", ")}`);
+          return { json: { ok: true, models: c.models } };
+        } catch (e) {
+          return { status: 400, json: { error: (e as Error).message } };
         }
       },
       "GET /api/config": async () => ({ json: { path: configPath, raw: await loadRawConfig(configPath), config, schema: configJsonSchema() } }),

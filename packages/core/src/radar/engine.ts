@@ -330,7 +330,7 @@ export class Radar {
       return null;
     }
     const before = tr.reading()?.fiveHourPct;
-    const model = this.d.model ?? "opus";
+    const model = this.d.model ?? cfg.models[STAGE_OF[kind]];
     s.model = model;
     const res = await runClaude({
       prompt,
@@ -708,6 +708,8 @@ export class Radar {
 }
 
 type AgentKind = "root_cause" | "adversarial" | "retrospective";
+/** Which config.models entry each agent step uses. */
+const STAGE_OF: Record<AgentKind, "radar" | "review" | "retrospective"> = { root_cause: "radar", adversarial: "review", retrospective: "retrospective" };
 
 interface Bundle {
   evidence: Map<string, { id: string; url: string; kind: Evidence["kind"]; text: string }>;

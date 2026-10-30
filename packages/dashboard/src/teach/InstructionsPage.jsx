@@ -253,13 +253,91 @@ function ConfigFile() {
   );
 }
 
+// One model per leg type, written to the config file's `models` block.
+function ModelsPanel() {
+  const [m, setM] = useState(null);
+  const [saving, setSaving] = useState(null);
+  const [flash, setFlash] = useState(null);
+  const [error, setError] = useState(null);
+  const load = useCallback(async () => setM(await engineCall('/api/models')), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  if (!m) return null;
+  const change = async (stage, model) => {
+    setSaving(stage);
+    setError(null);
+    setFlash(null);
+    try {
+      await engineCall('/api/config/models', { [stage]: model });
+      setFlash(`${m.stages.find((st) => st.id === stage).label} now uses ${model}. The next leg reads it.`);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(null);
+    }
+  };
+  return (
+    <article data-models className={CARD}>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-base font-semibold text-gray-900">Models</h2>
+        <span className={`${PILL} ml-auto bg-gray-50 text-gray-600 ring-gray-200`}>default {m.default}</span>
+      </div>
+      <p className="mt-1 text-sm text-gray-600">Which Claude model each leg runs on. Opus 5.5 is advised everywhere; a lighter model trades depth for speed and usage.</p>
+      {m.envOverride && (
+        <p role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          ULTIMATEHUMAN_MODEL={m.envOverride} is set in the engine's environment and overrides every choice below.
+        </p>
+      )}
+      {flash && (
+        <div role="status" data-flash className="mt-3 flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900">
+          <CheckCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+          <p>{flash}</p>
+        </div>
+      )}
+      {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-900">{error}</p>}
+      <ul className="mt-4 divide-y divide-gray-100">
+        {m.stages.map((st) => {
+          const cur = m.models[st.id];
+          const known = m.choices.some((c) => c.id === cur);
+          return (
+            <li key={st.id} data-model-stage={st.id} className="flex flex-wrap items-center gap-3 py-3">
+              <label htmlFor={`model-${st.id}`} className="min-w-[220px] flex-1 text-sm font-medium text-gray-900">
+                {st.label}
+                {!st.used && <span className="ml-2 text-xs font-normal text-gray-400">not run by this build yet</span>}
+              </label>
+              <select
+                id={`model-${st.id}`}
+                value={cur}
+                disabled={saving === st.id}
+                onChange={(e) => void change(st.id, e.target.value)}
+                className="min-h-[40px] w-64 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              >
+                {m.choices.map((c) => (
+                  <option key={c.id} value={c.id}>{c.label}{c.note ? ` (${c.note})` : ''}</option>
+                ))}
+                {!known && <option value={cur}>{cur} (from the file)</option>}
+              </select>
+            </li>
+          );
+        })}
+      </ul>
+    </article>
+  );
+}
+
 const TABS = [
   { key: 'instructions', label: 'Instructions' },
+  { key: 'models', label: 'Models' },
   { key: 'file', label: 'Config file' },
 ];
 
 export default function InstructionsPage() {
-  const [tab, setTab] = useState(() => (new URLSearchParams(location.search).get('tab') === 'file' ? 'file' : 'instructions'));
+  const [tab, setTab] = useState(() => {
+    const t = new URLSearchParams(location.search).get('tab');
+    return TABS.some((x) => x.key === t) ? t : 'instructions';
+  });
   const [data, setData] = useState(null);
   const [sel, setSel] = useState(() => new URLSearchParams(location.search).get('brief') || 'admission');
   const [flash, setFlash] = useState(null);
@@ -333,6 +411,7 @@ export default function InstructionsPage() {
 
         <div className="mt-5">
           {tab === 'file' && <ConfigFile />}
+          {tab === 'models' && <ModelsPanel />}
           {tab === 'instructions' && data && (
             <div className="space-y-4">
               {flash && (
