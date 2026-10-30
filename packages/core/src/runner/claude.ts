@@ -87,7 +87,8 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     "--max-turns", String(opts.maxTurns),
     "--strict-mcp-config",
     "--setting-sources", "",
-    "--disallowedTools", ...DENIED,
+    // A tool the caller allows on purpose is not denied wholesale; a path-scoped Edit(...) rule also scopes Write.
+    "--disallowedTools", ...DENIED.filter((t) => !tools.some((a) => { const n = a.split("(")[0]; return n === t || (n === "Edit" && t === "Write"); })),
   ];
   if (tools.length) args.push("--allowedTools", ...tools);
   else args.push("--tools", "");

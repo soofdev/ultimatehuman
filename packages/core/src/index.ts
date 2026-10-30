@@ -12,3 +12,4 @@ export { Radar } from "./radar/engine";
 export { renderIssue } from "./radar/issue";
 export { startDaemon, type DaemonHandle } from "./daemon";
 export { gradeSetup, gradeProbes, CI_WORKFLOW_PATH, TIERS, type SetupGrade, type Tier } from "./setup/grade";
+export { extractSends } from "./chat/files";

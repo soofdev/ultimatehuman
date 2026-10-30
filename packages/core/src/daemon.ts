@@ -1,5 +1,6 @@
 import { watch } from "node:fs";
 import { appendFileSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, dirname, basename } from "node:path";
 import type { Finding, Plugin } from "@ultimatehuman/sdk";
 import type { Config } from "./config/schema";
@@ -19,6 +20,7 @@ import { Notifier } from "./notify/notifier";
 import { gradeSetup, gradeProbes } from "./setup/grade";
 import { Chat, mergePatch } from "./chat/chat";
 import { ChatTelegram } from "./chat/telegram";
+import { allowedFile, fileType, saveToInbox, sentNote } from "./chat/files";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -164,7 +166,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     emit,
     log,
   });
-  const chatTelegram = new ChatTelegram({ store, chat, getConfig: () => config, configPath, log });
+  /** The only places chat files may be served or sent from: the install home and the configured repos. */
+  const chatRoots = () => [home, ...config.repos.map((r) => r.path)];
+  const chatTelegram = new ChatTelegram({ store, chat, home, chatRoots, getConfig: () => config, configPath, log });
 
   server = await startServer({
     host: config.server.host,
@@ -390,11 +394,28 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         }
       },
       "GET /api/chat": async () => ({ json: { messages: chat.history(), busy: chat.busy() } }),
+      "GET /api/chat/file": async (req) => {
+        const path = allowedFile(new URL(req.url ?? "/", "http://x").searchParams.get("path") ?? "", chatRoots());
+        if (!path) return { status: 403, json: { error: "only files inside the install home or a configured repo are served" } };
+        const type = fileType(path);
+        if (!type.startsWith("image/")) return { status: 415, json: { error: "only images are shown inline" } };
+        return { file: { data: await readFile(path), type } };
+      },
       "POST /api/chat": async (_r, body) => {
-        const text = String(body.text ?? "").trim();
+        let text = String(body.text ?? "").trim();
         const source = body.source === "cli" ? "cli" : "dashboard";
-        if (!text) return { status: 400, json: { error: "send { text }" } };
+        const files = Array.isArray(body.files) ? (body.files as any[]) : [];
+        if (!text && !files.length) return { status: 400, json: { error: "send { text } and/or { files: [{ name, data }] }" } };
         if (text.length > 8000) return { status: 400, json: { error: "keep a message under 8000 characters" } };
+        if (files.length > 4) return { status: 400, json: { error: "attach at most 4 files" } };
+        const decoded = files.map((f) => ({ name: String(f?.name ?? "image.png"), data: Buffer.from(String(f?.data ?? ""), "base64") }));
+        const bad = decoded.find((f) => !f.data.length || f.data.length > 10 * 1024 * 1024 || !fileType(f.name).startsWith("image/"));
+        if (bad) return { status: 400, json: { error: `${bad.name}: send an image (png, jpg, webp, gif, svg) under 10 MB` } };
+        // Bridge convention: the file lands in the inbox and the prompt carries one line per file.
+        for (const f of decoded) {
+          const path = saveToInbox(home, f.name, f.data);
+          text = text ? `${text}\n${sentNote("photo", path)}` : sentNote("photo", path);
+        }
         const t = chat.send(text, source);
         // The CLI waits for the reply; the dashboard returns at once and polls.
         if (body.wait === true) return { json: { user: t.user, reply: await t.reply } };

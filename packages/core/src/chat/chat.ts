@@ -1,8 +1,9 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config/schema";
 import { DEFAULT_MODEL, MODEL_STAGES } from "../config/schema";
 import { runClaude } from "../runner/claude";
+import { chatInbox, chatOutbox } from "./files";
 import type { ChatMessage, ChatSource, Store } from "../store/store";
 
 /**
@@ -19,7 +20,8 @@ const SESSION_KEY = "chat.session";
 
 export const CHAT_SYSTEM = `You are the setup assistant of this ultimatehuman install (a local radar that reads error trackers and analytics, and turns real user pain into findings a human rules on).
 You talk to the person who installed it, through the dashboard Chat page, the \`ultimatehuman chat\` CLI or Telegram — it is one conversation; each user message is tagged with the door it came through.
-Your job: explain the config and change it for them. You have NO file or shell tools. Each message carries the current config file (JSON5) — that is the source of truth.
+Your job: explain the config and change it for them. You have NO shell; you can Read files and Write only into the chat outbox. Each message carries the current config file (JSON5) — that is the source of truth.
+Files: a line "[user sent a photo, saved at /abs/path]" means the user attached that file — Read it to see it. To send a file or image back, put [[send:/absolute/path]] on its own line (it is stripped from the text and shown as the file); only paths inside this install's home or its configured repos are delivered. Write any image you make (e.g. an SVG) to \${OUTBOX}/ first.
 To change the config, end your reply with ONE fenced block tagged config-patch holding a JSON object that is deep-merged into the file (objects merge, arrays and values replace, null deletes a key). Example:
 \`\`\`config-patch
 { "features": { "validationGate": true } }
@@ -58,7 +60,7 @@ export class Chat {
   private tail: Promise<unknown> = Promise.resolve();
   private pending = 0;
   constructor(private d: ChatDeps) {
-    mkdirSync(join(d.home, "chat"), { recursive: true });
+    for (const dir of [chatInbox(d.home), chatOutbox(d.home)]) mkdirSync(dir, { recursive: true });
   }
 
   /** Turns waiting or running (0 = idle). */
@@ -89,17 +91,25 @@ export class Chat {
     const resume = this.d.store.getKv<string>(SESSION_KEY);
     const model = cfg.models?.chat ?? DEFAULT_MODEL;
     const prompt = `[door: ${source} · this chat runs on ${model}, set by models.chat · model stages: ${MODEL_STAGES.map((st) => st.id).join(", ")}; unset stages default to ${DEFAULT_MODEL}]\n\nCurrent config file:\n\`\`\`json5\n${await this.d.readRawConfig()}\`\`\`\n\nUser: ${text}`;
-    const r = await runClaude({
+    const env = await this.d.runnerEnv();
+    const run = (resumeId?: string) => runClaude({
       prompt,
       cwd: join(this.d.home, "chat"),
       model,
-      maxTurns: 2,
-      tools: [],
-      env: await this.d.runnerEnv(),
-      appendSystemPrompt: CHAT_SYSTEM,
+      // Read to see attachments; writes only inside the outbox (an Edit(path) rule scopes Write too), for images it sends back.
+      maxTurns: 8,
+      tools: ["Read", `Edit(/${realpathSync(chatOutbox(this.d.home))}/**)`],
+      env,
+      appendSystemPrompt: CHAT_SYSTEM.replace("${OUTBOX}", chatOutbox(this.d.home)),
       timeoutMs: 5 * 60_000,
-      ...(resume ? { resumeSessionId: resume } : {}),
+      ...(resumeId ? { resumeSessionId: resumeId } : {}),
     });
+    let r = await run(resume);
+    // The saved session can vanish (claude history cleared, home moved): start a fresh one rather than fail every turn.
+    if (!r.ok && resume && /no conversation found/i.test(r.error ?? "")) {
+      this.d.log("chat: saved session not found, starting a new one");
+      r = await run();
+    }
     if (r.sessionId) this.d.store.setKv(SESSION_KEY, r.sessionId);
     let out = r.ok ? r.text.trim() : `The agent turn failed: ${r.error ?? "unknown error"}`;
     if (r.ok) out = await this.applyPatches(out);
