@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir, userInfo } from "node:os";
-import { ensureHome, homeId, loadConfig, uhHome } from "@ultimatehuman/core";
+import { ensureHome, homeId, loadConfig, uhHome, readEnvFile, writeEnvFile, engineEnvPath } from "@ultimatehuman/core";
 
 /**
  * `service install | uninstall | status`: run the engine under the OS supervisor so it survives
@@ -17,7 +17,7 @@ const darwin = process.platform === "darwin";
 const slug = () => basename(uhHome()).replace(/^\./, "").replace(/[^A-Za-z0-9.-]/g, "-");
 const label = () => (darwin ? `dev.ultimatehuman.${slug()}` : `${slug()}.service`);
 const unitPath = () => (darwin ? join(homedir(), "Library", "LaunchAgents", `${label()}.plist`) : join(homedir(), ".config", "systemd", "user", label()));
-const envPath = () => join(uhHome(), "engine.env");
+const envPath = engineEnvPath;
 const logPath = () => join(uhHome(), "logs", "engine-service.log");
 const domain = () => `user/${userInfo().uid}`;
 
@@ -38,15 +38,6 @@ function referencedVars(node: unknown, acc = new Set<string>()): Set<string> {
   return acc;
 }
 
-function readEnvFile(p: string): Map<string, string> {
-  const m = new Map<string, string>();
-  if (!existsSync(p)) return m;
-  for (const l of readFileSync(p, "utf8").split("\n")) {
-    const hit = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(l);
-    if (hit) m.set(hit[1]!, hit[2]!.replace(/^(['"])(.*)\1$/, "$2"));
-  }
-  return m;
-}
 
 /** The node on PATH that is this node (e.g. /opt/homebrew/bin/node), so a package-manager upgrade
  *  that swaps the versioned Cellar dir does not leave the unit pointing at a deleted binary. */
@@ -144,8 +135,7 @@ async function install(): Promise<number> {
     return 2;
   }
   env.set("PATH", process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"); // the service must find `claude` like this shell does
-  writeFileSync(envPath(), [...env].map(([k, v]) => `${k}=${v}`).join("\n") + "\n", { mode: 0o600 });
-  chmodSync(envPath(), 0o600);
+  writeEnvFile(env);
 
   // Reinstall: stop the current service first so its supervisor does not respawn what we stop next.
   if (existsSync(unitPath())) {

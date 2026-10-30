@@ -21,6 +21,8 @@ export interface GradeProbes {
   ciInstalled: string[];
   /** Repo names whose configured path is an existing directory. */
   reposPresent: string[];
+  /** Source plugins (trackers) configured and enabled. */
+  sources: string[];
 }
 
 export interface GradeCheck {
@@ -48,6 +50,7 @@ export function gradeSetup(cfg: Config, raw: Record<string, any>, p: GradeProbes
   const checks: GradeCheck[] = [
     { id: "repos", tier: "bronze", label: "At least one repo configured and on disk", ok: repos.length > 0 && repos.every((r) => p.reposPresent.includes(r.name)), hint: repos.length ? `Fix the path of: ${repos.filter((r) => !p.reposPresent.includes(r.name)).map((r) => r.name).join(", ")}` : "Add a repo to `repos` in the config (name + local path)." },
     { id: "claude", tier: "bronze", label: "claude CLI found on this machine", ok: p.claudeCli, hint: "Install Claude Code and log in (`claude`), or set ULTIMATEHUMAN_CLAUDE_BIN." },
+    { id: "sources", tier: "silver", label: "An error tracker or analytics source connected", ok: p.sources.length > 0, hint: "Connect Sentry, PostHog or Datadog with a read-only key (`ultimatehuman init`, or ask the chat what is pending)." },
     { id: "notifications", tier: "silver", label: "Notifications or Telegram chat on", ok: !!tg?.enabled || !!(chatTg?.enabled && chatTg.botToken), hint: "Turn on notifications.telegram (bot token as a ${ENV_VAR} ref + chat id), or chat.telegram (bot token ref)." },
     { id: "guard", tier: "silver", label: "Usage guard on (window reserve or API daily cap)", ok: cfg.governor.humanReservePct > 0 || hasKeyCap, hint: "Set governor.humanReservePct above 0 (default 30)." },
     { id: "fixLoop", tier: "gold", label: "Fix loop enabled", ok: cfg.features.fixLoop, hint: "Turn on features.fixLoop (reserved: the fix loop ships later)." },
@@ -66,8 +69,8 @@ export function gradeSetup(cfg: Config, raw: Record<string, any>, p: GradeProbes
   return { tier, next, checks, unlocks: next ? checks.filter((c) => c.tier === next && !c.ok) : [] };
 }
 
-/** The cheap live probes: file-system checks only, no network, no agent. */
-export function gradeProbes(cfg: Config): GradeProbes {
+/** The cheap live probes: file-system checks only, no network, no agent. `sourceIds` = plugin ids of kind source. */
+export function gradeProbes(cfg: Config, sourceIds: readonly string[] = []): GradeProbes {
   const isDir = (p: string) => existsSync(p) && statSync(p).isDirectory();
   const bin = claudeBin();
   const claudeCli = bin.includes("/") ? existsSync(bin) : (process.env.PATH ?? "").split(delimiter).some((d) => d && existsSync(join(d, bin)));
@@ -76,5 +79,6 @@ export function gradeProbes(cfg: Config): GradeProbes {
     claudeCli,
     reposPresent: present.map((r) => r.name),
     ciInstalled: present.filter((r) => existsSync(join(r.path, CI_WORKFLOW_PATH))).map((r) => r.name),
+    sources: sourceIds.filter((id) => cfg.plugins[id] && cfg.plugins[id]!.enabled !== false),
   };
 }

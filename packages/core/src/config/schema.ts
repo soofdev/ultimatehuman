@@ -59,6 +59,25 @@ const RepoSchema = z.object({
 export type RepoConfig = z.infer<typeof RepoSchema>;
 
 /**
+ * Pending ledger (docs/setup-grade.md): one entry per setup step the wizard skipped, with why
+ * it matters. The daemon clears an entry when what it waits for shows up (every `envVars`
+ * name is set, or the `gradeCheck` passes), applies its `activate` patch, and says so in the chat.
+ */
+const PendingSchema = z.object({
+  id: z.string().regex(/^[a-z0-9._-]+$/).describe("Stable id, e.g. datadog.key"),
+  label: z.string().describe("What is missing, in a few words"),
+  why: z.string().describe("Why it matters: what the radar gains"),
+  unlock: z.string().describe("The exact next step"),
+  tier: z.enum(["bronze", "silver", "gold", "platinum"]).optional().describe("The setup-grade tier this item helps reach"),
+  plugin: z.string().optional().describe("Plugin id the item is about"),
+  envVars: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).optional().describe("Resolved when every one of these is set (shell or engine.env)"),
+  gradeCheck: z.string().optional().describe("Resolved when this setup-grade check passes"),
+  activate: z.record(z.string(), z.unknown()).optional().describe("Config patch applied when the item resolves (secrets as ${ENV_VAR} refs only)"),
+  since: z.string().describe("ISO time the item was recorded"),
+});
+export type PendingItem = z.infer<typeof PendingSchema>;
+
+/**
  * Old shape -> new shape, applied to the raw object before validation:
  * radar.repo.path becomes repos[0] when no repos list exists yet. Idempotent.
  */
@@ -219,6 +238,7 @@ export const ConfigSchema = z
       .prefault({})
       .describe("The setup chat: one conversation, three doors (dashboard, CLI, Telegram)"),
     environments: z.array(EnvironmentSchema).default([]),
+    pending: z.array(PendingSchema).default([]).describe("Setup steps skipped at install, with why they matter. Cleared automatically when done."),
   })
   .strict();
 
