@@ -91,3 +91,13 @@ export async function choose(question: string, options: string[], def = 0): Prom
   const n = Number(a) - 1;
   return n >= 0 && n < options.length ? n : def;
 }
+
+/** Like ask, for a secret: on a terminal the typed line is redrawn masked once Enter is hit. */
+export async function askSecret(question: string): Promise<string> {
+  const a = await ask(question);
+  if (a && process.stdin.isTTY && process.stdout.isTTY) {
+    const shown = `${"•".repeat(Math.min(12, Math.max(4, a.length - 4)))}${a.slice(-4)}`;
+    process.stdout.write(`\x1b[1A\r\x1b[2K  ${c.accent("?")} ${c.bold(question)} ${c.muted(shown)}\n`);
+  }
+  return a;
+}
