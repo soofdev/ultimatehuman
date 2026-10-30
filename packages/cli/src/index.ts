@@ -7,6 +7,7 @@ import { configCmd } from "./commands/config";
 import { dashboard } from "./commands/dashboard";
 import { service, serviceInstalled } from "./commands/service";
 import { ci } from "./commands/ci";
+import { chat } from "./commands/chat";
 
 const USAGE = `ultimatehuman <command>
 
@@ -15,6 +16,8 @@ const USAGE = `ultimatehuman <command>
   doctor      Check config, credentials, scopes and service; --fix repairs
   config      get <path> | set <path> <value> | schema
   dashboard   Print a single-use dashboard login link
+  chat        The setup chat (same conversation as the dashboard Chat page and Telegram);
+              chat "<message>" sends one message and prints the reply
   stop        Stop the engine started by init
   service     install | uninstall | status (systemd user unit / launchd agent)
   ci          install [--repo <name|path>] [--base main] [--runner-label <label>] [--model <id>] [--force]
@@ -65,6 +68,8 @@ async function main(argv: string[]): Promise<number> {
       return configCmd(positionals);
     case "dashboard":
       return dashboard();
+    case "chat":
+      return chat(positionals);
     case "stop": {
       if (serviceInstalled()) {
         console.log("the engine runs as a service (it would restart); use `ultimatehuman service uninstall` to stop it");

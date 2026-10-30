@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config/schema";
-import { DEFAULT_MODEL } from "../config/schema";
+import { DEFAULT_MODEL, MODEL_STAGES } from "../config/schema";
 import { runClaude } from "../runner/claude";
 import type { ChatMessage, ChatSource, Store } from "../store/store";
 
@@ -87,11 +87,12 @@ export class Chat {
   private async turn(text: string, source: ChatSource): Promise<ChatMessage> {
     const cfg = this.d.getConfig();
     const resume = this.d.store.getKv<string>(SESSION_KEY);
-    const prompt = `[door: ${source}]\n\nCurrent config file:\n\`\`\`json5\n${await this.d.readRawConfig()}\`\`\`\n\nUser: ${text}`;
+    const model = cfg.models?.chat ?? DEFAULT_MODEL;
+    const prompt = `[door: ${source} · this chat runs on ${model}, set by models.chat · model stages: ${MODEL_STAGES.map((st) => st.id).join(", ")}; unset stages default to ${DEFAULT_MODEL}]\n\nCurrent config file:\n\`\`\`json5\n${await this.d.readRawConfig()}\`\`\`\n\nUser: ${text}`;
     const r = await runClaude({
       prompt,
       cwd: join(this.d.home, "chat"),
-      model: cfg.models?.chat ?? DEFAULT_MODEL,
+      model,
       maxTurns: 2,
       tools: [],
       env: await this.d.runnerEnv(),
