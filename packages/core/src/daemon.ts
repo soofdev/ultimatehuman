@@ -444,6 +444,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     if (reload) clearTimeout(reload);
     reload = setTimeout(async () => {
       try {
+        // A config that now references a key saved with `ultimatehuman key` resolves at once, not on the next minute check.
+        loadEngineEnv();
         config = await loadConfig(configPath);
         log("config reloaded");
       } catch (e) {

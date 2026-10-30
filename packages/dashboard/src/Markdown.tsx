@@ -41,6 +41,13 @@ export function Markdown({ text }: { text: string }) {
           i++;
           continue;
         }
+        // Nested items ("  - x"): one sub-list per run of them.
+        if (/^\s{2,}[-*] /.test(it)) {
+          const sub: ReactNode[] = [];
+          while (i < lines.length && /^\s{2,}[-*] /.test(lines[i]!)) sub.push(<li key={i}>{inline(lines[i]!.replace(/^\s+[-*] /, ""), i)}</li>), i++;
+          items.push(<ul key={`s${i}`}>{sub}</ul>);
+          continue;
+        }
         if (/^  > /.test(it)) items.push(<blockquote key={i} style={{ margin: "4px 0 6px" }}>{inline(it.slice(4), i)}</blockquote>);
         else if (/^- /.test(it)) items.push(<li key={i}>{inline(it.slice(2), i)}</li>);
         i++;
