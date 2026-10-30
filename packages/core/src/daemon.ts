@@ -1,6 +1,6 @@
 import { watch } from "node:fs";
 import { appendFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
 import type { Finding, Plugin } from "@ultimatehuman/sdk";
 import type { Config } from "./config/schema";
 import JSON5 from "json5";
@@ -379,13 +379,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
 
   radar.rearm();
   // Hot reload: a hand edit is validated; an invalid file keeps the last good config and logs why.
-  watch(configPath, async () => {
-    try {
-      config = await loadConfig(configPath);
-      log("config reloaded");
-    } catch (e) {
-      log(`config invalid, keeping the last good one: ${(e as Error).message}`);
-    }
+  // Watch the directory, not the file: writeConfig replaces the file by rename, which a file watch does not survive.
+  let reload: NodeJS.Timeout | null = null;
+  watch(dirname(configPath), (_ev, name) => {
+    if (name !== basename(configPath)) return;
+    if (reload) clearTimeout(reload);
+    reload = setTimeout(async () => {
+      try {
+        config = await loadConfig(configPath);
+        log("config reloaded");
+      } catch (e) {
+        log(`config invalid, keeping the last good one: ${(e as Error).message}`);
+      }
+    }, 100);
   });
   // Minimal daily cron ("M H * * *").
   const cron = /^(\d+)\s+(\d+)\s+\*\s+\*\s+\*$/.exec(config.radar.schedule);
