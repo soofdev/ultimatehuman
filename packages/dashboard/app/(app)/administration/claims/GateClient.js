@@ -82,9 +82,9 @@ function SourceChips({ ticket }) {
   const n = ticket.merge?.blocks?.length || 0;
   return (
     <>
-      {ticket.max_related
-        ? <Chip kind="max" icon={BoltIcon} title="Fixing and checking it runs MAX conversations">Uses MAX</Chip>
-        : <Chip kind="nomax" title="No MAX conversation to fix or check it">No MAX cost</Chip>}
+      {/* ultimatehuman: the gate is reason-agnostic (features.validationGate); the MAX chips only show when a feed says so */}
+      {ticket.max_related === true && <Chip kind="max" icon={BoltIcon} title="Fixing and checking it runs MAX conversations">Uses MAX</Chip>}
+      {ticket.max_related === false && <Chip kind="nomax" title="No MAX conversation to fix or check it">No MAX cost</Chip>}
       {n > 1 && <Chip kind="merged" icon={ArrowsPointingInIcon}>Merged · {n} problems</Chip>}
       {claims.slice(0, 3).map((c) => <Chip key={c} kind="source" icon={ScaleIcon}>Claim {c}</Chip>)}
       {!claims.length && n < 2 && <Chip kind="source" icon={MagnifyingGlassIcon}>Found by the radar</Chip>}
@@ -121,7 +121,7 @@ function WhyItExists({ ticket, claimsById }) {
   if (!claims.length) {
     return (
       <>
-        The radar found this problem in real conversations.
+        The radar found this problem in your product's signals.
         <EvidenceLinks links={ticket.links} />
       </>
     );
@@ -361,6 +361,9 @@ function GateCard({ ticket, claimsById, selected, onToggle, selectionFull, onUpd
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <KeyBadge ticketKey={ticket.key} />
+            {ticket.repo && (
+              <span data-repo-badge={ticket.repo} className="shrink-0 whitespace-nowrap rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 font-mono text-[11px] font-medium text-indigo-700">{ticket.repo}</span>
+            )}
             <SourceChips ticket={ticket} />
             {later && <Chip kind="later" icon={ClockIcon}>Later · since {formatDay(ticket.gate_at)}</Chip>}
             {inPlanOf && <Chip kind="plan" icon={BeakerIcon} title="This ticket is in an open Plan testing thread">In the test plan on {inPlanOf}</Chip>}
@@ -375,7 +378,7 @@ function GateCard({ ticket, claimsById, selected, onToggle, selectionFull, onUpd
           ? <Row label={`${blocks} problems`}><MergedProblems ticket={ticket} claimsById={claimsById} /></Row>
           : <Row label="What is wrong">{sentence(ticket.plain?.problem || ticket.excerpt)}</Row>}
         {blocks < 2 && <Row label="Why it exists"><WhyItExists ticket={ticket} claimsById={claimsById} /></Row>}
-        <Row label="Cost"><CostLine maxRelated={ticket.max_related} /></Row>
+        {'max_related' in ticket && <Row label="Cost"><CostLine maxRelated={ticket.max_related} /></Row>}
         {blocks > 1 && (
           <Row label="Saved">
             <span data-merge-saved>{mergeSavings(blocks)}</span>
@@ -835,10 +838,9 @@ export default function GateClient({ tickets, claims, onUpdate, onMerged, render
           onDismiss={dismissBundle}
         />
         <p className="max-w-3xl text-sm leading-relaxed text-gray-600">
-          Fixes that would run MAX conversations wait here for your go: nothing runs and nothing is spent until you validate.
-          Validate sends one to the fix queue (one fix round, then one exam); Later parks it for free. Fixes that do not use
-          MAX go to the fix queue on their own. Select several to merge them into one ticket, so one fix round and one exam
-          cover them all.
+          With the validation gate on, new tickets wait here for your go: nothing moves on until you validate.
+          Validate promotes one to the next stage; Later keeps it here; Dismiss drops it with your reason.
+          Select several to merge them into one ticket.
         </p>
 
         <Section id="pending" title="Awaiting your validation" count={lists.pending.length}>
@@ -846,7 +848,7 @@ export default function GateClient({ tickets, claims, onUpdate, onMerged, render
             <div className="grid grid-cols-1 items-start gap-4 2xl:grid-cols-2">{lists.pending.map(card)}</div>
           ) : (
             <p className="rounded-xl border border-dashed border-gray-300 bg-white px-4 py-10 text-center text-sm text-gray-500">
-              No MAX fix is waiting for your validation.
+              Nothing is waiting for your validation.
             </p>
           )}
         </Section>
@@ -866,7 +868,7 @@ export default function GateClient({ tickets, claims, onUpdate, onMerged, render
         )}
 
         {lists.auto.length > 0 && (
-          <Section id="auto" title="Flowing on their own" hint="no MAX cost, no validation needed" count={lists.auto.length}>
+          <Section id="auto" title="Flowing on their own" hint="no validation needed" count={lists.auto.length}>
             <ul className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white shadow-sm">
               {lists.auto.map((t) => <AutoRow key={t.key} ticket={t} selected={isSel(t.key)} onToggle={toggle} selectionFull={full} />)}
             </ul>

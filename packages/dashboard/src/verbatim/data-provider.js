@@ -22,7 +22,9 @@
 //   proposal parked                -> 'decision' unanswered again (A/B/C back), "parked on <date>" in its context
 //   proposal applied / rejected or stale -> 'shipped' / 'cancelled'
 //   TEACH card extras (src/teach/proposal-cards.jsx): the change as a red/green diff, answer copy in proposal words
-//   validation gate, merge, building, manual, bundles, flags, chat -> none: no fix legs in this radar.
+//   finding.validation pending/later (features.validationGate) -> queue 'backlog', gate pending/later (Awaiting validation)
+//   Validate / Later / Dismiss on it -> POST /api/findings/:id/validate
+//   merge, building, manual, bundles, flags, chat -> none: no fix legs in this radar.
 
 import { enhanceTeachCards } from '../teach/proposal-cards';
 import { cockpitHref, stageOf } from '@/app/lib/pipeline-live';
@@ -142,6 +144,11 @@ function toTicket(card, key) {
   if (f && r?.ruling === 'file') return { ...base, queue: 'shipped', merged_at: r.at, prs: issueLinks(r) };
   if (r?.ruling === 'dismiss') {
     return { ...base, queue: 'cancelled', cancelled_at: r.at, cancel: { reason: `You dismissed it: ${r.reason}`, requested_at: r.at, acked_at: r.at, ack_error: null } };
+  }
+  // features.validationGate: a finding still waiting for promotion sits in Awaiting validation
+  const v = f?.validation;
+  if (f && (v?.state === 'pending' || v?.state === 'later')) {
+    return { ...base, queue: 'backlog', gate: v.state, gate_at: v.at, plain: { ...base.plain, how: f.rootCause?.statement || '' } };
   }
   if (f) return { ...base, queue: 'decision', decision: decisionOf(card), answer: null };
   return { ...base, queue: 'cancelled', cancelled_at: d.at, cancel: { reason: `The radar dropped it in the ${d.runLabel}: ${d.reason}`, requested_at: d.at, acked_at: d.at, ack_error: null } };
@@ -337,6 +344,15 @@ async function cancel({ key, reason }) {
   return json(200, { ticket: { ...before, cancel: { reason: why, requested_at: at, acked_at: at, ack_error: null } } });
 }
 
+async function gate({ key, action, note }) {
+  const card = cardOf.get(key);
+  if (!card?.finding) return json(404, { error: 'Unknown ticket' });
+  if (!['validate', 'later', 'dismiss'].includes(action)) return json(400, { error: 'Validate, Later or Dismiss only.' });
+  await engine(`/api/findings/${encodeURIComponent(card.finding.id)}/validate`, { action, note });
+  await refresh();
+  return json(200, { ticket: toTicket(cardOf.get(key), key) });
+}
+
 async function live() {
   await refresh();
   return json(200, JSON.parse(JSON.stringify({ tickets: tickets(), sync: syncStatus(), read_at: new Date() })));
@@ -351,6 +367,7 @@ window.fetch = async (input, init = {}) => {
     if (path === '/api/admin/pipeline/answer') return await answer(body);
     if (path === '/api/admin/pipeline/cancel') return await cancel(body);
     if (path === '/api/admin/pipeline/live') return await live();
+    if (path === '/api/admin/pipeline/gate') return await gate(body);
     return json(404, { error: 'Not available in this radar: it has no fix pipeline yet.' });
   } catch (e) {
     return json(e.status || 500, { error: e.message });

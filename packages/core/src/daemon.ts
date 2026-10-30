@@ -227,6 +227,26 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         }
         return { json: { ok: true } };
       },
+      // features.validationGate: promote (validate), hold (later) or dismiss a finding waiting for validation.
+      "POST /api/findings/:id/validate": async (_r, body, p) => {
+        const f = store.getFinding(p.id!) as (Finding & Record<string, any>) | undefined;
+        if (!f) return { status: 404, json: { error: "no such finding" } };
+        const action = String(body.action ?? "");
+        if (!["validate", "later", "dismiss"].includes(action)) return { status: 400, json: { error: "action must be validate, later or dismiss" } };
+        const at = new Date().toISOString();
+        if (action === "dismiss") {
+          const reason = String(body.note ?? "").trim() || "dismissed at validation";
+          f.validation = { state: "dismissed", at };
+          store.saveFinding(f);
+          if (f.clusterId) rule(f.clusterId, "dismiss", reason);
+        } else {
+          f.validation = { state: action === "validate" ? "validated" : "later", at };
+          store.saveFinding(f);
+          emit({ type: "finding.updated", finding: f });
+        }
+        log(`validation: ${action} on ${f.id}`);
+        return { json: { ok: true, finding: store.getFinding(f.id) } };
+      },
       "GET /api/cockpit": async () => ({ json: { ...buildCockpit(store, radar.current(), dryRunOutput()), proposals: store.listProposals(30), instructionsVersion: instructions.current().version.version } }),
       "POST /api/rulings": async (_r, body) => {
         const clusterId = String(body.clusterId ?? "");
@@ -328,6 +348,22 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           const c = await patchConfig((raw) => (raw.models = { ...(raw.models ?? {}), ...Object.fromEntries(entries) }));
           log(`models updated: ${entries.map(([k, v]) => `${k}=${v}`).join(", ")}`);
           return { json: { ok: true, models: c.models } };
+        } catch (e) {
+          return { status: 400, json: { error: (e as Error).message } };
+        }
+      },
+      "GET /api/features": async () => {
+        const props = ((configJsonSchema() as any).properties?.features?.properties ?? {}) as Record<string, { description?: string }>;
+        return { json: { features: Object.entries(config.features).map(([id, on]) => ({ id, on, description: props[id]?.description ?? "", reserved: /^Reserved/.test(props[id]?.description ?? "") })) } };
+      },
+      "POST /api/config/features": async (_r, body) => {
+        const known = new Set(Object.keys(config.features));
+        const entries = Object.entries(body ?? {}).filter(([k, v]) => known.has(k) && typeof v === "boolean");
+        if (!entries.length) return { status: 400, json: { error: "send { <feature>: true|false }" } };
+        try {
+          const c = await patchConfig((raw) => (raw.features = { ...(raw.features ?? {}), ...Object.fromEntries(entries) }));
+          log(`features updated: ${entries.map(([k, v]) => `${k}=${v ? "on" : "off"}`).join(", ")}`);
+          return { json: { ok: true, features: c.features } };
         } catch (e) {
           return { status: 400, json: { error: (e as Error).message } };
         }

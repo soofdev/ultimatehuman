@@ -327,9 +327,66 @@ function ModelsPanel() {
   );
 }
 
+// Optional behaviour: every flag defaults off, and off = behaviour identical.
+const FEATURE_LABEL = { validationGate: 'Validation gate', fixLoop: 'Fix loop', ledger: 'Ledger' };
+function FeaturesPanel() {
+  const [f, setF] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const load = useCallback(async () => setF(await engineCall('/api/features')), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  if (!f) return null;
+  const toggle = async (id, on) => {
+    setBusy(id);
+    setError(null);
+    try {
+      await engineCall('/api/config/features', { [id]: on });
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <article data-features className={CARD}>
+      <h2 className="text-base font-semibold text-gray-900">Features</h2>
+      <p className="mt-1 text-sm text-gray-600">Everything is optional. Each flag starts off, and off behaves exactly like a build without the feature.</p>
+      {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-900">{error}</p>}
+      <ul className="mt-4 divide-y divide-gray-100">
+        {f.features.map((x) => (
+          <li key={x.id} data-feature={x.id} data-on={x.on ? '1' : '0'} className="flex items-start gap-4 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-gray-900">
+                {FEATURE_LABEL[x.id] || x.id}
+                {x.reserved && <span className="ml-2 text-xs font-normal text-gray-400">reserved</span>}
+              </p>
+              <p className="mt-0.5 text-sm text-gray-600">{x.description}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={x.on}
+              aria-label={FEATURE_LABEL[x.id] || x.id}
+              disabled={busy === x.id}
+              onClick={() => void toggle(x.id, !x.on)}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${x.on ? 'bg-emerald-600' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${x.on ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
+}
+
 const TABS = [
   { key: 'instructions', label: 'Instructions' },
   { key: 'models', label: 'Models' },
+  { key: 'features', label: 'Features' },
   { key: 'file', label: 'Config file' },
 ];
 
@@ -412,6 +469,7 @@ export default function InstructionsPage() {
         <div className="mt-5">
           {tab === 'file' && <ConfigFile />}
           {tab === 'models' && <ModelsPanel />}
+          {tab === 'features' && <FeaturesPanel />}
           {tab === 'instructions' && data && (
             <div className="space-y-4">
               {flash && (

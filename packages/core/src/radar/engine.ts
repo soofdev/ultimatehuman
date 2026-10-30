@@ -457,6 +457,8 @@ export class Radar {
     const prior = this.d.store.findingsByFingerprint(finding.dedupe.fingerprint).filter((f) => f.runId !== run.id);
     if (prior.length) (finding as any).recurredFrom = prior[0]!.id;
     this.endStep(run, s4, "passed", prior.length ? `recurred: matches ${prior[0]!.id}` : "new: no match in the local store");
+    // features.validationGate: the finding waits for a human promotion. Off: no field, it flows straight through.
+    if (this.d.getConfig().features.validationGate) (finding as any).validation = { state: "pending", at: now() };
     this.d.store.saveFinding(finding);
     run.findings++;
     run.findingIds.push(finding.id);

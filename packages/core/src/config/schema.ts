@@ -101,6 +101,21 @@ const ModelsSchema = z
   .object(Object.fromEntries(MODEL_STAGES.map((st) => [st.id, modelId.describe(`Model for the ${st.label} leg${st.used ? "" : " (not run by this build yet)"}`)])) as Record<ModelStage, typeof modelId>)
   .prefault({});
 
+/**
+ * Optional behaviour, one flag each (the reference pipeline's contract): every flag
+ * defaults OFF, and off means behaviour identical to a build without the feature.
+ * Flags marked reserved are parsed and shown in the setup grade but change nothing yet.
+ */
+const FeaturesSchema = z
+  .object({
+    validationGate: z.boolean().default(false)
+      .describe("On: new findings wait in the cockpit's Awaiting validation stage until you promote them. Off: they go straight to Needs decision."),
+    fixLoop: z.boolean().default(false).describe("Reserved: fix legs that open PRs proven in a browser. No effect in this build."),
+    ledger: z.boolean().default(false).describe("Reserved: per-leg spend/usage ledger. No effect in this build."),
+  })
+  .prefault({});
+export type Features = z.infer<typeof FeaturesSchema>;
+
 /** v2-ready: test environments the (future) QA executor may enter. Parsed and validated in v1, unused. */
 const EnvironmentSchema = z.object({
   name: z.string(),
@@ -178,6 +193,7 @@ export const ConfigSchema = z
           .prefault({}),
       })
       .prefault({}),
+    features: FeaturesSchema.describe("Optional behaviour. Every flag defaults off; off = behaviour identical."),
     models: ModelsSchema.describe("Model per leg type. Defaults to claude-opus-5-5 everywhere."),
     repos: z.array(RepoSchema).default([])
       .describe("Local checkouts the agents read (and later fix) code in. Each repo keeps its own git/GitHub auth; nothing here is a credential."),
