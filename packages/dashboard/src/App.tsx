@@ -8,13 +8,15 @@ import AdminSidebar from "./ported/AdminSidebar";
 import { Runs } from "./pages/Runs";
 import { Usage } from "./pages/Usage";
 import { ConfigPage } from "./pages/Config";
+import { ChatPage } from "./pages/Chat";
 
-export type Page = "cockpit" | "setup" | "runs" | "usage" | "config";
+export type Page = "cockpit" | "setup" | "runs" | "usage" | "config" | "chat";
 const PAGES: { id: Page; label: string }[] = [
   { id: "cockpit", label: "Cockpit" },
   { id: "runs", label: "Runs" },
   { id: "usage", label: "Usage" },
   { id: "config", label: "Config" },
+  { id: "chat", label: "Chat" },
   { id: "setup", label: "Setup" },
 ];
 
@@ -153,6 +155,7 @@ export function App() {
               {page === "runs" && <Runs s={state} />}
               {page === "usage" && <Usage s={state} />}
               {page === "config" && <ConfigPage />}
+              {page === "chat" && <ChatPage />}
             </div>
           </div>
         )}

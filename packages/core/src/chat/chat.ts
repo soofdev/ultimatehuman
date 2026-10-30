@@ -121,9 +121,9 @@ export class Chat {
         if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("the patch must be a JSON object");
         await this.d.applyPatch(patch);
         this.d.log(`chat config patch applied: ${paths(patch).join(", ")}`);
-        out += `✅ Config updated: ${paths(patch).map((p) => `\`${p}\``).join(", ")}`;
+        out += `\n\n✅ Config updated: ${paths(patch).map((p) => `\`${p}\``).join(", ")}`;
       } catch (e) {
-        out += `⚠️ Config change refused: ${(e as Error).message.slice(0, 400)}`;
+        out += `\n\n⚠️ Config change refused: ${(e as Error).message.slice(0, 400)}`;
       }
     }
     return (out + text.slice(last)).trim();
