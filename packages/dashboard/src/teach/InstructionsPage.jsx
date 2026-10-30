@@ -383,10 +383,74 @@ function FeaturesPanel() {
   );
 }
 
+// Setup grade (docs/setup-grade.md): computed by the engine from the config + cheap probes.
+const TIER = {
+  bronze: { label: 'Bronze', cls: 'bg-amber-50 text-amber-900 ring-amber-300', dot: 'bg-amber-700' },
+  silver: { label: 'Silver', cls: 'bg-slate-100 text-slate-800 ring-slate-300', dot: 'bg-slate-400' },
+  gold: { label: 'Gold', cls: 'bg-yellow-50 text-yellow-900 ring-yellow-400', dot: 'bg-yellow-500' },
+  platinum: { label: 'Platinum', cls: 'bg-indigo-50 text-indigo-900 ring-indigo-300', dot: 'bg-indigo-500' },
+};
+const tierName = (t) => (t ? TIER[t].label : 'Not set up');
+
+export function GradeBadge({ grade, onClick }) {
+  if (!grade) return null;
+  const t = grade.tier ? TIER[grade.tier] : { cls: 'bg-gray-50 text-gray-600 ring-gray-200', dot: 'bg-gray-300' };
+  return (
+    <button type="button" data-grade-badge={grade.tier || 'none'} onClick={onClick} className={`${PILL} ${t.cls}`} title="Setup grade: what is configured, and what unlocks the next tier">
+      <span className={`h-2 w-2 rounded-full ${t.dot}`} aria-hidden />
+      Setup grade: {tierName(grade.tier)}
+    </button>
+  );
+}
+
+function GradePanel({ grade }) {
+  if (!grade) return null;
+  return (
+    <div className="space-y-4">
+      <article data-grade className={CARD}>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-base font-semibold text-gray-900">Setup grade</h2>
+          <span className="ml-auto"><GradeBadge grade={grade} /></span>
+        </div>
+        <p className="mt-1 text-sm text-gray-600">
+          Everything is optional; the grade says how much of the pipeline this install uses. Each tier needs all of its checks and those of the tiers below.
+        </p>
+        {grade.next && (
+          <div data-unlocks className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <p className="text-sm font-semibold text-gray-900">What unlocks {tierName(grade.next)}</p>
+            <ul className="mt-2 space-y-1.5">
+              {grade.unlocks.map((c) => (
+                <li key={c.id} className="text-sm text-gray-700">
+                  <span className="font-medium text-gray-900">{c.label}.</span> {c.hint}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </article>
+      <article className={CARD}>
+        <ul className="divide-y divide-gray-100">
+          {grade.checks.map((c) => (
+            <li key={c.id} data-grade-check={c.id} data-ok={c.ok ? '1' : '0'} className="flex items-start gap-3 py-2.5">
+              <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${c.ok ? 'bg-emerald-500' : 'bg-gray-300'}`} aria-hidden />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-gray-900">{c.label}</p>
+                {!c.ok && <p className="text-xs text-gray-500">{c.hint}</p>}
+              </div>
+              <span className={`${PILL} ${TIER[c.tier].cls}`}>{TIER[c.tier].label}</span>
+            </li>
+          ))}
+        </ul>
+      </article>
+    </div>
+  );
+}
+
 const TABS = [
   { key: 'instructions', label: 'Instructions' },
   { key: 'models', label: 'Models' },
   { key: 'features', label: 'Features' },
+  { key: 'grade', label: 'Setup grade' },
   { key: 'file', label: 'Config file' },
 ];
 
@@ -399,9 +463,14 @@ export default function InstructionsPage() {
   const [sel, setSel] = useState(() => new URLSearchParams(location.search).get('brief') || 'admission');
   const [flash, setFlash] = useState(null);
   const load = useCallback(async () => setData(await engineCall('/api/instructions')), []);
+  const [grade, setGrade] = useState(null);
   useEffect(() => {
     void load();
   }, [load]);
+  // re-graded on every tab switch: a Models/Features change can move the tier
+  useEffect(() => {
+    void engineCall('/api/setup-grade').then(setGrade).catch(() => {});
+  }, [tab]);
   const go = (t) => {
     setTab(t);
     const u = new URL(location.href);
@@ -427,6 +496,7 @@ export default function InstructionsPage() {
         <header>
           <div className="flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-gray-900">Config</h1>
+            <span className="ml-auto"><GradeBadge grade={grade} onClick={() => go('grade')} /></span>
             {data && (
               <span data-in-force className={`${PILL} bg-white text-gray-700 ring-gray-200`}>
                 <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
@@ -470,6 +540,7 @@ export default function InstructionsPage() {
           {tab === 'file' && <ConfigFile />}
           {tab === 'models' && <ModelsPanel />}
           {tab === 'features' && <FeaturesPanel />}
+          {tab === 'grade' && <GradePanel grade={grade} />}
           {tab === 'instructions' && data && (
             <div className="space-y-4">
               {flash && (

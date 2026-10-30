@@ -16,6 +16,7 @@ import { buildCockpit, backfillFindingClusters } from "./cockpit";
 import { Instructions, InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, estimateTokens, validateBrief, type BriefId } from "./instructions/instructions";
 import { ruleProposal } from "./instructions/proposals";
 import { Notifier } from "./notify/notifier";
+import { gradeSetup, gradeProbes } from "./setup/grade";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -351,6 +352,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         } catch (e) {
           return { status: 400, json: { error: (e as Error).message } };
         }
+      },
+      "GET /api/setup-grade": async () => {
+        const raw = JSON5.parse(await loadRawConfig(configPath)) as Record<string, any>;
+        return { json: gradeSetup(config, raw, gradeProbes(config)) };
       },
       "GET /api/features": async () => {
         const props = ((configJsonSchema() as any).properties?.features?.properties ?? {}) as Record<string, { description?: string }>;
