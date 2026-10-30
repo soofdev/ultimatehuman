@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline/promises";
-import { controlKey, loadConfig } from "@ultimatehuman/core";
+import { controlKey, extractSends, loadConfig } from "@ultimatehuman/core";
 
 /**
  * `ultimatehuman chat`: the setup chat in a terminal. Same conversation as the
@@ -10,8 +10,11 @@ export async function chat(positionals: string[]): Promise<number> {
   const port = await loadConfig().then((c) => c.server.port).catch(() => 4747);
   const base = `http://127.0.0.1:${port}/api/chat`;
   const headers = { "x-uh-control": controlKey(), "content-type": "application/json" };
-  const show = (m: { role: string; text: string; source: string; ts: string }) =>
-    console.log(`\n${m.role === "user" ? "you" : "assistant"} [${m.source}] ${new Date(m.ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}\n${m.text}`);
+  // Files the agent sends ([[send:/path]]) cannot render in a terminal: print their paths.
+  const show = (m: { role: string; text: string; source: string; ts: string }) => {
+    const { text, paths } = m.role === "assistant" ? extractSends(m.text) : { text: m.text, paths: [] };
+    console.log(`\n${m.role === "user" ? "you" : "assistant"} [${m.source}] ${new Date(m.ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}\n${text}${paths.map((p) => `\n[file] ${p}`).join("")}`);
+  };
 
   const hist = await fetch(base, { headers }).catch(() => null);
   if (!hist?.ok) {
