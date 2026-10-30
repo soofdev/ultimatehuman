@@ -453,7 +453,7 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .chat-msg.assistant .chat-bubble { white-space: normal; }
 .chat-msg.user .chat-bubble { background: var(--ink); color: white; border-color: var(--ink); }
 .chat-busy { display: inline-flex; gap: 7px; align-items: center; color: var(--ink-3); }
-.chat-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-files { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
 .chat-msg.user .chat-files { justify-content: flex-end; }
 .chat-thumb { padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: white; cursor: zoom-in; line-height: 0; }
 .chat-thumb img { display: block; max-width: 280px !important; max-height: 220px; object-fit: cover; }

@@ -134,19 +134,22 @@ export function ChatPage() {
           {msgs.length === 0 && <p className="chat-empty">Your setup assistant. Ask about the config or tell it what to change. One conversation, three doors: this page, <code>ultimatehuman chat</code>, and Telegram when enabled.</p>}
           {msgs.map((m) => {
             const p = parts(m);
+            const files = p.files.length > 0 && (
+              <div className="chat-files">
+                {p.files.map((f, i) => (
+                  <Attachment key={i} path={f} open={setFull} />
+                ))}
+              </div>
+            );
             return (
               <div key={m.id} className={`chat-msg ${m.role}`} data-chat-msg={m.role} data-source={m.source}>
                 <div className="chat-meta">
                   {m.role === "user" ? "You" : "Assistant"} · <span className="pill" data-source-tag>{m.source}</span> · {time(m.ts)}
                 </div>
-                {p.files.length > 0 && (
-                  <div className="chat-files">
-                    {p.files.map((f, i) => (
-                      <Attachment key={i} path={f} open={setFull} />
-                    ))}
-                  </div>
-                )}
+                {/* Like Telegram: your photo above its caption; the agent's files after its text. */}
+                {m.role === "user" && files}
                 {p.text && <div className="chat-bubble">{m.role === "assistant" ? <Markdown text={p.text} /> : p.text}</div>}
+                {m.role === "assistant" && files}
               </div>
             );
           })}
