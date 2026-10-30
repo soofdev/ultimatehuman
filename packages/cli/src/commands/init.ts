@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from "node:child_process";
 import { openSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { ensureHome, controlKey, homeId, writeConfig, defaultConfigPath, runClaude, claudeBin, readOnlyHttp, outboundHttp, notifyHosts, type RateLimitReading } from "@ultimatehuman/core";
@@ -254,7 +254,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
 
   const repoDefault = process.env.ULTIMATEHUMAN_GITHUB_REPO ?? gitRemoteRepo();
   console.log("");
-  const repo = flags.repo ?? (flags.nonInteractive ? repoDefault ?? "" : await ask("GitHub repo for issues (owner/name):", repoDefault));
+  const repo = flags.repo ?? (flags.nonInteractive ? repoDefault ?? "" : await ask("GitHub repo for issue previews (optional, owner/name; Enter to skip):", repoDefault));
   closePrompts();
   if (repo) {
     const gh = found.github;
@@ -266,8 +266,9 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     line.ok("GitHub", `${repo} · ${c.muted(`${how} · dry run: issues are previewed, never created`)}`);
     add({ id: "github.repo", label: "GitHub", status: "ok", summary: `Issues go to ${repo} (${how})`, detail: "Dry run: issues are rendered and previewed, never created" });
   }
-  // The checkout we were started in becomes the read-only code the root-cause agents may read.
-  const codePath = repo && repo === gitRemoteRepo() ? gitTopLevel() : undefined;
+  // The checkout we were started in becomes the first configured repo (more can be added to `repos`).
+  // It does not depend on GitHub: agents use the checkout's own git auth.
+  const codePath = gitTopLevel();
   if (codePath) {
     line.ok("Code", `${tilde(codePath)} ${c.muted("· read-only: agents may Read/Grep it to cite code lines, never run or change it")}`);
     add({ id: "code.repo", label: "Code", status: "ok", summary: `Read-only code: ${tilde(codePath)}`, detail: "Root-cause agents can Read and Grep this checkout to cite file:line pointers. They cannot run, edit or push anything." });
@@ -291,7 +292,8 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     ...(port !== 4747 ? { server: { port } } : {}),
     auth: { sources: [authKind === "claude_oauth_token" ? { id: "sub", kind: "claude_oauth_token", token: "${CLAUDE_CODE_OAUTH_TOKEN}" } : { id: "sub", kind: "claude_login" }] },
     governor: { humanReservePct: 30 },
-    radar: { schedule: "0 7 * * *", lookbackHours: 24, firstPassLookbackHours: 168, minUsersAffected: 2, maxFindingsPerRun: 3, autoFile: false, ...(codePath ? { repo: { path: codePath } } : {}) },
+    radar: { schedule: "0 7 * * *", lookbackHours: 24, firstPassLookbackHours: 168, minUsersAffected: 2, maxFindingsPerRun: 3, autoFile: false },
+    ...(codePath ? { repos: [{ name: basename(codePath).replace(/[^A-Za-z0-9._-]/g, "-"), path: codePath }] } : {}),
     plugins: pluginConfig,
     ...(Object.keys(notifications).length ? { notifications } : {}),
   };

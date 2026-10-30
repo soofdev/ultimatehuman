@@ -182,7 +182,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       "POST /api/findings/:id/file": async (_r, _b, p) => {
         const x = issueFor(p.id!);
         if (!x) return { status: 404, json: { error: "no such finding" } };
-        const o = output()!;
+        const o = output();
+        if (!o) {
+          // No issue tracker configured: the pipeline owns its tickets, so "file" just accepts the ticket here.
+          const cid = (x.f as any).clusterId as string | undefined;
+          if (cid) rule(cid, "file", null, { dryRun: true, repo: "" });
+          log(`accepted (no issue tracker configured): ${x.issue.title}`);
+          return { json: { dryRun: true, message: "accepted - no issue tracker is configured", issue: x.issue, repo: "" } };
+        }
         const ctx = { credentials: await resolveCredentials(o.manifest.id).catch(() => ({ repo: x.repo })), options: config.plugins[o.manifest.id]?.options ?? {}, http: null as any, log: () => {}, signal: new AbortController().signal };
         const filed = await (o as any).output.file(ctx, x.f);
         const rec = { at: new Date().toISOString(), repo: x.repo, ref: filed.ref, title: x.issue.title };

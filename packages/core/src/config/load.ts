@@ -2,7 +2,7 @@ import { readFile, writeFile, rename, copyFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import JSON5 from "json5";
-import { ConfigSchema, type Config } from "./schema";
+import { ConfigSchema, migrateConfig, type Config } from "./schema";
 import { uhHome } from "../home";
 
 export class MissingEnvVarError extends Error {
@@ -23,7 +23,7 @@ export function defaultConfigPath(): string {
 /** Parse + validate. Secret refs stay as refs; call resolveSecretRefs at use time only. */
 export async function loadConfig(path = defaultConfigPath()): Promise<Config> {
   const raw = await readFile(path, "utf8");
-  return ConfigSchema.parse(JSON5.parse(raw));
+  return ConfigSchema.parse(migrateConfig(JSON5.parse(raw)));
 }
 
 export async function loadRawConfig(path = defaultConfigPath()): Promise<string> {
@@ -32,6 +32,7 @@ export async function loadRawConfig(path = defaultConfigPath()): Promise<string>
 
 /** Validate, then write atomically, keeping a .bak ring of 5. Only a config that validates is ever written. */
 export async function writeConfig(config: unknown, path = defaultConfigPath(), header?: string): Promise<Config> {
+  config = migrateConfig(config);
   const parsed = ConfigSchema.parse(config);
   if (existsSync(path)) {
     for (let i = 4; i >= 1; i--) {

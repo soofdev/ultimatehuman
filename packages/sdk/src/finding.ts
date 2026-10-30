@@ -30,7 +30,7 @@ export interface Finding {
     /** Each step cites at least one evidence item by id. */
     reasoning: readonly { claim: string; evidenceIds: readonly string[] }[];
     /** Code location when the repo is connected (read-only clone). */
-    codePointers?: readonly { path: string; line?: number; commit?: string; text?: string; why?: string; url?: string }[];
+    codePointers?: readonly { repo?: string; path: string; line?: number; commit?: string; text?: string; why?: string; url?: string }[];
     /** What was checked and ruled out. */
     ruledOut?: readonly string[];
   };
@@ -48,6 +48,8 @@ export interface Finding {
     matchedIssue?: { ref: string; url: string; similarity: number; decision: "duplicate" | "related" | "new" };
   };
   status: FindingStatus;
+  /** Name of the configured repo (config repos[].name) this finding is about, when known. */
+  repo?: string;
   filedIssue?: { ref: string; url: string; filedAt: string; filedBy: "human" | "auto" };
 }
 

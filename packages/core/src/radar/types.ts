@@ -84,7 +84,9 @@ export interface RunRecord {
   notes: string[];
   costUsd: number;
   /** Read-only repo checkout the agents could read for this run, if one was connected. */
+  /** Legacy single checkout (runs before multi-repo). New runs use `repos`. */
   code?: { path: string; commit?: string; repo?: string };
+  repos?: { name: string; path: string; commit?: string; repo?: string; notes?: string }[];
   /** The instruction set this run read (SPEC 7b): fixed at trigger time, so a resumed run keeps its version. */
   instructions?: { version: number; at: string; note: string; minUsersAffected: number; tokens: number };
   /** What the post-run retrospective did: proposal ids it put in the cockpit, or why it did not run. */

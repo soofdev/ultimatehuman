@@ -8,6 +8,7 @@
 // and the Claims tab shows its own empty state.
 //
 // Mapping (see the task REPORT.md for what stays unmapped):
+//   finding.repo           -> ticket.repo (repo badge beside the key; config repos[].name)
 //   finding, no ruling     -> queue 'decision' (Needs decision): File / Dismiss / Not now
 //   finding or draft parked -> queue 'decision', answered C (Not now)
 //   finding filed          -> queue 'shipped' (filed date as the merge date; the real issue as its link)
@@ -63,10 +64,12 @@ const day = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: 'numeric'
 const OPTIONS = () => [
   {
     letter: 'A',
-    label: 'File to GitHub',
-    text: feed?.output?.dryRun
-      ? `Records it as filed on ${repoOf()}. Dry run: nothing is sent to GitHub while no GitHub token is set.`
-      : `Opens the issue on ${repoOf()}.`,
+    label: repoOf() ? 'File to GitHub' : 'Accept',
+    text: !repoOf()
+      ? 'Accepts the ticket. No issue tracker is configured: the pipeline keeps its own tickets.'
+      : feed?.output?.dryRun
+        ? `Records it as filed on ${repoOf()}. Dry run: nothing is sent to GitHub while no GitHub token is set.`
+        : `Opens the issue on ${repoOf()}.`,
   },
   { letter: 'B', label: 'Dismiss', text: 'Not a bug. Say why in the box below: the radar keeps it out of the next passes unless its impact grows.' },
   { letter: 'C', label: 'Not now', text: 'Park it. It comes back for a fresh look the first time a pass sees a new occurrence.' },
@@ -78,7 +81,7 @@ function decisionOf(card) {
   if (f) {
     const i = f.impact || {};
     return {
-      question: `${card.title}. File it as an issue on ${repoOf()}?`,
+      question: `${card.title}. ${repoOf() ? `File it as an issue on ${repoOf()}?` : 'Accept it as a ticket?'}`,
       options: OPTIONS(),
       recommendation: '',
       context: [
@@ -112,6 +115,7 @@ function toTicket(card, key) {
   const base = {
     key,
     title: card.title,
+    repo: f?.repo || null,
     plain: { improves: card.title, problem: f ? f.symptom : d.reason, how: '' },
     verdict: '',
     fix_class: '',

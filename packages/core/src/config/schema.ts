@@ -50,6 +50,30 @@ const TelegramNotifierSchema = PluginInstanceSchema.extend({
   }),
 });
 
+const RepoSchema = z.object({
+  name: z.string().regex(/^[A-Za-z0-9._-]+$/, "letters, digits, dot, dash, underscore").describe("Short name shown as the repo badge on tickets"),
+  path: z.string().describe("Absolute path of the local checkout"),
+  testUrl: z.url().optional().describe("Staging/test URL for this repo's product, if any"),
+  notes: z.string().optional().describe("Free-form notes the agents read about this repo"),
+});
+export type RepoConfig = z.infer<typeof RepoSchema>;
+
+/**
+ * Old shape -> new shape, applied to the raw object before validation:
+ * radar.repo.path becomes repos[0] when no repos list exists yet. Idempotent.
+ */
+export function migrateConfig(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const c = raw as Record<string, any>;
+  const legacy = c.radar?.repo?.path;
+  if (typeof legacy === "string" && legacy && !(Array.isArray(c.repos) && c.repos.length)) {
+    const name = legacy.replace(/\/+$/, "").split("/").pop()?.replace(/[^A-Za-z0-9._-]/g, "-") || "repo";
+    const { repo: _drop, ...radar } = c.radar;
+    return { ...c, radar, repos: [{ name, path: legacy }] };
+  }
+  return raw;
+}
+
 /** v2-ready: test environments the (future) QA executor may enter. Parsed and validated in v1, unused. */
 const EnvironmentSchema = z.object({
   name: z.string(),
@@ -122,11 +146,13 @@ export const ConfigSchema = z
         retentionDays: z.number().int().min(1).default(30).describe("Run bundles older than this are pruned"),
         repo: z
           .object({
-            path: z.string().optional().describe("Local read-only checkout used for code pointers"),
+            path: z.string().optional().describe("Deprecated: use the top-level repos list. Migrated on load."),
           })
           .prefault({}),
       })
       .prefault({}),
+    repos: z.array(RepoSchema).default([])
+      .describe("Local checkouts the agents read (and later fix) code in. Each repo keeps its own git/GitHub auth; nothing here is a credential."),
     plugins: z.record(z.string(), PluginInstanceSchema).default({}),
     notifications: z
       .object({

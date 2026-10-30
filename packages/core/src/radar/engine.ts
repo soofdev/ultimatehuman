@@ -73,10 +73,10 @@ export class Radar {
     run.instructions = { version: ins.version, at: ins.at, note: ins.note, minUsersAffected: ins.knobs.minUsersAffected, tokens: ins.tokens };
     run.notes.push(`Ran with instructions v${ins.version} (${shortDate(ins.at)}: ${ins.note}). Users-affected floor ${ins.knobs.minUsersAffected}; briefs ≈${ins.tokens} tokens.`);
     if (cur.warning) run.notes.push(`Instructions: ${cur.warning}.`);
-    const code = codeContext(cfg);
-    if (code) {
-      run.code = code;
-      run.notes.push(`Code connected read-only: ${code.path}${code.commit ? ` at ${code.commit.slice(0, 10)}` : ""}. Agents may Read/Grep it; code pointers are re-checked against the files.`);
+    const repos = codeContexts(cfg);
+    if (repos.length) {
+      run.repos = repos;
+      run.notes.push(`Code connected read-only: ${repos.map((r) => `${r.name} (${r.path}${r.commit ? ` at ${r.commit.slice(0, 10)}` : ""})`).join(", ")}. Agents may Read/Grep it; code pointers are re-checked against the files.`);
     } else run.notes.push("No code connected: root causes stay at the level the analytics data supports.");
     this.active = run;
     this.save(run);
@@ -339,7 +339,7 @@ export class Radar {
       maxTurns: 14,
       env: await this.d.runnerEnv(),
       transcriptPath: join(cwd, `${kind}${resumeSessionId ? ".repair" : ""}.transcript.jsonl`),
-      ...(run.code ? { addDirs: [run.code.path] } : {}),
+      ...(runRepos(run).length ? { addDirs: runRepos(run).map((r) => r.path) } : {}),
       ...(resumeSessionId ? { resumeSessionId } : {}),
     });
     for (const r of res.rateLimits) tr.ingest(r, run.id);
@@ -397,7 +397,7 @@ export class Radar {
 
     // root-cause
     const s1 = this.step(run, c, "root_cause");
-    const r1 = await this.agent(run, s1, "root_cause", rootCausePrompt(this.floor(run), this.briefs(run), run.code), cdir);
+    const r1 = await this.agent(run, s1, "root_cause", rootCausePrompt(this.floor(run), this.briefs(run), runRepos(run)), cdir);
     if (!r1) return true;
     if (!r1.ok) {
       this.endStep(run, s1, "failed", r1.error ?? "agent failed");
@@ -421,7 +421,7 @@ export class Radar {
 
     // deterministic gate
     const s2 = this.step(run, c, "gate");
-    const gate = deterministicGate(draft, bundle, c, this.floor(run), run.code);
+    const gate = deterministicGate(draft, bundle, c, this.floor(run), runRepos(run));
     if (!gate.ok) {
       this.endStep(run, s2, "dropped", gate.reason);
       run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "gate", reason: gate.reason, usersAffected: c.usersAffected, title: draft.title ?? "", at: now() });
@@ -431,7 +431,7 @@ export class Radar {
 
     // adversarial
     const s3 = this.step(run, c, "adversarial");
-    const r3 = await this.agent(run, s3, "adversarial", adversarialPrompt(JSON.stringify(draft, null, 2), this.briefs(run), run.code), cdir);
+    const r3 = await this.agent(run, s3, "adversarial", adversarialPrompt(JSON.stringify(draft, null, 2), this.briefs(run), runRepos(run)), cdir);
     if (!r3) return true;
     const review = r3.ok ? await this.parseWithRepair<Review>(run, s3, "adversarial", r3, cdir, ReviewSchema as any) : null;
     if (review === "parked") return true;
@@ -755,19 +755,40 @@ export function correlate(signals: readonly Signal[]): Cluster[] {
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 
-/** Repo checkout from config (radar.repo.path), with the commit it is at. Read-only: git rev-parse only. */
-export function codeContext(cfg: Config): CodeContext | undefined {
-  const p = cfg.radar.repo?.path;
-  if (!p || !existsSync(p) || !statSync(p).isDirectory()) return undefined;
-  const root = realpathSync(p);
-  let commit: string | undefined;
-  try {
-    commit = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  } catch {
-    /* not a git checkout: pointers still work, without a commit */
+/** Repo checkouts from config (repos[]), each with the commit it is at. Read-only: git rev-parse only. Missing paths are skipped. */
+export function codeContexts(cfg: Config): CodeContext[] {
+  const ghRepo = cfg.plugins.github?.credentials?.repo;
+  const out: CodeContext[] = [];
+  for (const r of cfg.repos ?? []) {
+    if (!r.path || !existsSync(r.path) || !statSync(r.path).isDirectory()) continue;
+    const root = realpathSync(r.path);
+    let commit: string | undefined;
+    try {
+      commit = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    } catch {
+      /* not a git checkout: pointers still work, without a commit */
+    }
+    // The GitHub slug (for pointer links) is only known for the first repo, from the legacy github plugin config.
+    const slug = out.length === 0 && typeof ghRepo === "string" && ghRepo ? ghRepo : undefined;
+    out.push({ name: r.name, path: root, ...(commit ? { commit } : {}), ...(slug ? { repo: slug } : {}), ...(r.notes ? { notes: r.notes } : {}) });
   }
-  const repo = cfg.plugins.github?.credentials?.repo;
-  return { path: root, ...(commit ? { commit } : {}), ...(typeof repo === "string" && repo ? { repo } : {}) };
+  return out;
+}
+
+/** Repos a run was started with; runs stored before multi-repo carry a single `code` checkout. */
+export function runRepos(run: RunRecord): CodeContext[] {
+  if (run.repos?.length) return run.repos;
+  return run.code ? [{ name: run.code.path.split("/").pop() || "repo", ...run.code }] : [];
+}
+
+/** Which repo a pointer belongs to: its named repo, else the one whose root contains the absolute path, else the first where the file exists. */
+export function repoForPointer(repos: CodeContext[], ptr: { repo?: string | undefined; path: string }): CodeContext | undefined {
+  if (ptr.repo) {
+    const named = repos.find((r) => r.name === ptr.repo);
+    if (named) return named;
+  }
+  if (isAbsolute(ptr.path)) return repos.find((r) => !relative(r.path, ptr.path).startsWith(".."));
+  return repos.find((r) => existsSync(resolve(r.path, ptr.path))) ?? repos[0];
 }
 
 /** Re-finds a code pointer in the checkout: path stays inside the repo, the quoted line is at (or within 2 lines of) the cited line. */
@@ -786,7 +807,7 @@ export function checkCodePointer(code: CodeContext, ptr: { path: string; line: n
   return { ok: false, reason: `code pointer ${rel}:${ptr.line} not found verbatim: "${ptr.text.slice(0, 80)}"` };
 }
 
-export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number, code?: CodeContext): { ok: true; note: string } | { ok: false; reason: string } {
+export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number, repos: CodeContext[] = []): { ok: true; note: string } | { ok: false; reason: string } {
   if (!d.title || !d.symptom || !d.rootCause || !d.reproduction || !d.fingerprint || !d.severity || !d.confidence || !d.openQuestions)
     return { ok: false, reason: "a required field is empty (title, symptom, rootCause, reproduction, fingerprint, severity, confidence or openQuestions)" };
   const cited = new Set(d.rootCause.reasoning.flatMap((r) => r.evidenceIds));
@@ -805,16 +826,19 @@ export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number
   if (c.usersAffected < floor && d.severity !== "critical") return { ok: false, reason: `${c.usersAffected} users affected, below the ${floor}-user floor` };
   let ptrs = 0;
   if (d.codePointers?.length) {
-    if (!code) return { ok: false, reason: "cites code pointers but no code is connected" };
+    if (!repos.length) return { ok: false, reason: "cites code pointers but no code is connected" };
     for (const ptr of d.codePointers) {
+      const code = repoForPointer(repos, ptr);
+      if (!code) return { ok: false, reason: `code pointer ${ptr.path} is in no connected repo` };
       const r = checkCodePointer(code, ptr);
-      if (!r.ok) return { ok: false, reason: r.reason };
+      if (!r.ok) return { ok: false, reason: `${repos.length > 1 ? `${code.name}: ` : ""}${r.reason}` };
       ptr.line = r.line;
+      ptr.repo = code.name;
       if (isAbsolute(ptr.path)) ptr.path = relative(code.path, ptr.path);
       ptrs++;
     }
   }
-  return { ok: true, note: `${cited.size} evidence items, ${quotes} quotes re-found verbatim${code ? `, ${ptrs} code pointer${ptrs === 1 ? "" : "s"} re-found in the repo` : ""}, ${c.usersAffected} users ≥ floor ${floor}` };
+  return { ok: true, note: `${cited.size} evidence items, ${quotes} quotes re-found verbatim${repos.length ? `, ${ptrs} code pointer${ptrs === 1 ? "" : "s"} re-found in the repo` : ""}, ${c.usersAffected} users ≥ floor ${floor}` };
 }
 
 function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b: Bundle): Finding {
@@ -827,6 +851,10 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
     return { id, sourcePluginId: "posthog", kind: e.kind, url: e.url, excerpt: redact(quote ?? label), observedAt: run.startedAt, label } as Evidence;
   });
   const fp = d.fingerprint!;
+  const repos = runRepos(run);
+  const codeOf = (p: { repo?: string | undefined }) => repos.find((r) => r.name === p.repo);
+  // First-class repo: where the code pointers landed, else the only connected repo.
+  const repo = d.codePointers?.find((p) => p.repo)?.repo ?? (repos.length === 1 ? repos[0]!.name : undefined);
   const f: Finding & Record<string, unknown> = {
     id: "f_" + createHash("sha1").update(fp + run.id).digest("hex").slice(0, 10),
     runId: run.id,
@@ -845,8 +873,9 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
               line: p.line,
               text: p.text.trim(),
               why: p.why,
-              ...(run.code?.commit ? { commit: run.code.commit } : {}),
-              ...(run.code?.repo ? { url: `https://github.com/${run.code.repo}/blob/${run.code.commit ?? "HEAD"}/${p.path}#L${p.line}` } : {}),
+              ...(p.repo ? { repo: p.repo } : {}),
+              ...(codeOf(p)?.commit ? { commit: codeOf(p)!.commit } : {}),
+              ...(codeOf(p)?.repo ? { url: `https://github.com/${codeOf(p)!.repo}/blob/${codeOf(p)!.commit ?? "HEAD"}/${p.path}#L${p.line}` } : {}),
             })),
           }
         : {}),
@@ -860,6 +889,7 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
     status: "new",
     createdAt: new Date().toISOString(),
     route: c.route,
+    ...(repo ? { repo } : {}),
     clusterId: c.id,
     review: { verdict: review.verdict, reasons: review.reasons },
   };

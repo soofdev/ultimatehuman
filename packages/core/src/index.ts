@@ -1,4 +1,4 @@
-export { ConfigSchema, configJsonSchema, type Config } from "./config/schema";
+export { ConfigSchema, configJsonSchema, migrateConfig, type Config, type RepoConfig } from "./config/schema";
 export { loadConfig, writeConfig, resolveSecretRefs, defaultConfigPath, describeRef, MissingEnvVarError } from "./config/load";
 export { getPath, setPath } from "./config/paths";
 export { uhHome, ensureHome, controlKey, homeId } from "./home";
