@@ -17,6 +17,7 @@ import { Instructions, InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, est
 import { ruleProposal } from "./instructions/proposals";
 import { Notifier } from "./notify/notifier";
 import { gradeSetup, gradeProbes } from "./setup/grade";
+import { Chat, mergePatch } from "./chat/chat";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -149,6 +150,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     emit({ type: "config.updated" });
     return config;
   };
+
+  const chat = new Chat({
+    home,
+    store,
+    getConfig: () => config,
+    readRawConfig: () => loadRawConfig(configPath),
+    applyPatch: async (p) => {
+      await patchConfig((raw) => mergePatch(raw, p));
+    },
+    runnerEnv,
+    emit,
+    log,
+  });
 
   server = await startServer({
     host: config.server.host,
@@ -372,6 +386,18 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         } catch (e) {
           return { status: 400, json: { error: (e as Error).message } };
         }
+      },
+      "GET /api/chat": async () => ({ json: { messages: chat.history(), busy: chat.busy() } }),
+      "POST /api/chat": async (_r, body) => {
+        const text = String(body.text ?? "").trim();
+        const source = body.source === "cli" ? "cli" : "dashboard";
+        if (!text) return { status: 400, json: { error: "send { text }" } };
+        if (text.length > 8000) return { status: 400, json: { error: "keep a message under 8000 characters" } };
+        const t = chat.send(text, source);
+        // The CLI waits for the reply; the dashboard returns at once and polls.
+        if (body.wait === true) return { json: { user: t.user, reply: await t.reply } };
+        void t.reply.catch((e) => log(`chat turn crashed: ${(e as Error).message}`));
+        return { status: 202, json: { user: t.user, busy: chat.busy() } };
       },
       "GET /api/config": async () => ({ json: { path: configPath, raw: await loadRawConfig(configPath), config, schema: configJsonSchema() } }),
     },

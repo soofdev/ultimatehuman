@@ -92,7 +92,7 @@ export const MODEL_STAGES = [
   { id: "bundle", label: "Bundle", used: false },
   { id: "fix", label: "Fix", used: false },
   { id: "exam", label: "Exam (hostile check)", used: false },
-  { id: "chat", label: "Ticket chat", used: false },
+  { id: "chat", label: "Setup chat", used: true },
 ] as const;
 export type ModelStage = (typeof MODEL_STAGES)[number]["id"];
 
@@ -205,6 +205,19 @@ export const ConfigSchema = z
           .describe("Base URL used in notification links (e.g. a tailnet or tunnel address). Defaults to the local dashboard."),
       })
       .prefault({}),
+    chat: z
+      .object({
+        telegram: z
+          .object({
+            enabled: z.boolean().default(false).describe("Off by default. On: the daemon long-polls this bot; the first chat that writes to it is bound and every other chat is ignored"),
+            botToken: SecretRef.optional().describe("From BotFather. A ${ENV_VAR} ref, never the token itself. Use a bot of its own: getUpdates allows one poller per bot"),
+            apiBase: z.url().default("https://api.telegram.org").describe("Telegram Bot API base URL (point it at a local stub to test)"),
+          })
+          .prefault({})
+          .describe("Setup chat on Telegram: the same conversation as the dashboard Chat page and `ultimatehuman chat`"),
+      })
+      .prefault({})
+      .describe("The setup chat: one conversation, three doors (dashboard, CLI, Telegram)"),
     environments: z.array(EnvironmentSchema).default([]),
   })
   .strict();
