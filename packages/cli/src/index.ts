@@ -6,6 +6,7 @@ import { doctor } from "./commands/doctor";
 import { configCmd } from "./commands/config";
 import { dashboard } from "./commands/dashboard";
 import { service, serviceInstalled } from "./commands/service";
+import { ci } from "./commands/ci";
 
 const USAGE = `ultimatehuman <command>
 
@@ -16,6 +17,8 @@ const USAGE = `ultimatehuman <command>
   dashboard   Print a single-use dashboard login link
   stop        Stop the engine started by init
   service     install | uninstall | status (systemd user unit / launchd agent)
+  ci          install [--repo <name|path>] [--base main] [--runner-label <label>] [--model <id>] [--force]
+              writes the PR review check (workflow + .github/review/) into a repo; never commits
 
 Every interactive step has a flag (init: --project <posthog id>, --repo owner/name,
 --notify-prefix <text>, --notify-server <url>);
@@ -36,6 +39,10 @@ async function main(argv: string[]): Promise<number> {
       repo: { type: "string" },
       "notify-prefix": { type: "string" },
       "notify-server": { type: "string" },
+      base: { type: "string" },
+      "runner-label": { type: "string" },
+      model: { type: "string" },
+      force: { type: "boolean" },
     },
   });
   const flags = {
@@ -78,6 +85,14 @@ async function main(argv: string[]): Promise<number> {
     }
     case "service":
       return service(positionals[0], flags);
+    case "ci":
+      return ci(positionals[0], {
+        ...(typeof values.repo === "string" ? { repo: values.repo } : {}),
+        ...(typeof values.base === "string" ? { base: values.base } : {}),
+        ...(typeof values["runner-label"] === "string" ? { runnerLabel: values["runner-label"] } : {}),
+        ...(typeof values.model === "string" ? { model: values.model } : {}),
+        force: values.force === true,
+      });
     case undefined:
     case "help":
     case "--help":

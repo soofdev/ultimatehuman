@@ -1,0 +1,62 @@
+# Local PR review gate, installed by `ultimatehuman ci install`: a Claude review
+# of every PR into {{BASE_BRANCH}}, run on YOUR machine through a self-hosted
+# runner (label {{RUNNER_LABEL}}). Prompt + wrapper live in .github/review/.
+# The job goes red on a BLOCK verdict or when the review itself fails.
+#
+# Runs once when a PR is opened (or reopened). New pushes do NOT re-run it:
+# press Actions -> "PR review" -> "Run workflow" (or `gh workflow run
+# ultimatehuman-pr-review.yml --ref <branch>`) to review again.
+
+name: PR review
+
+on:
+  pull_request:
+    branches: [{{BASE_BRANCH}}]
+    types: [opened, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number (empty = the open PR from this branch into {{BASE_BRANCH}})"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  pr-review:
+    name: pr-review
+    # Never from a fork: this runner is a real machine with your Claude login.
+    if: >-
+      (github.event_name == 'pull_request'
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, {{RUNNER_LABEL}}]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Claude review
+        run: bash .github/review/run.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CLAUDE_MODEL: {{MODEL}}
+          REVIEW_BASE: {{BASE_BRANCH}}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DISPATCH_REF: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || '' }}
+          DISPATCH_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
