@@ -14,6 +14,16 @@ Each user message is one `claude -p` turn that resumes the session id kept in th
 
 Each turn carries the current config file. To change it, the agent ends its reply with a fenced `config-patch` JSON block; the engine deep-merges it into the file (objects merge, values and arrays replace, `null` deletes), validates it and writes it through the same path as the Config page. The block is replaced in the reply by `✅ Config updated: <paths>` or `⚠️ Config change refused: <why>`.
 
+## Setup concierge
+
+Each turn also carries the setup grade, what unlocks the next tier, and the pending ledger
+([setup-grade.md](setup-grade.md#pending-ledger)) with each item's exact read-only scopes. The
+system prompt makes the chat the door for post-install setup: "what's missing?" lists the pending
+items with their grade impact; "draft the message to my admin for the Datadog key" produces a
+copy-paste request naming only the read-only scopes, and asks for the key to be handed over with
+`ultimatehuman key`, never through the chat. When a pending key shows up, the engine (not the
+agent) clears the item and posts the grade change here and on Telegram.
+
 ## Images and files
 
 The same conventions as the Telegram -> Claude Code bridge (`vince_assistant/bot.py`):

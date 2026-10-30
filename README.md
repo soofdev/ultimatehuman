@@ -21,7 +21,14 @@ git clone https://github.com/vincent38wargnier/ultimatehuman.git && cd ultimateh
 bash scripts/bootstrap.sh      # Node 22 via nvm if missing -> pnpm -> install -> build -> init
 ```
 
-`bootstrap.sh` is idempotent and never uses sudo (`--no-init` stops after the build). Then:
+`bootstrap.sh` is idempotent and never uses sudo (`--no-init` stops after the build). `init` asks
+which repos to watch, scans their dependency manifests for Sentry/PostHog/Datadog SDKs and offers
+to paste a read-only key for each one it finds (saved to `~/.ultimatehuman/engine.env`, 0600; the
+config only holds `${ENV}` refs), asks for a staging URL, and ends on your setup grade plus a
+**pending** list of what you skipped. Nothing is required past a repo and Claude Code: with no
+error tracker at all it offers to write a minimal Sentry init on a new branch of your repo.
+Add a skipped key later with `ultimatehuman key <ENV_NAME>`; the engine picks it up within a minute.
+Then:
 
 ```sh
 node packages/cli/dist/cli.mjs dashboard          # one-time login link to the local dashboard
@@ -44,7 +51,7 @@ One file, `~/.ultimatehuman/config.json5` (see `config.example.json5`), editable
 
 - **Node 22+** (bootstrap installs it)
 - **A Claude Code login** on the machine. An API key works too, for extra capacity.
-- **At least one source:** Sentry or PostHog. Datadog is coming next.
+- **Sources (optional, one is enough):** PostHog, Datadog (error logs + error events, read-only Application key: `logs_read_data`, `logs_read_index_data`, `events_read`; site `datadoghq.com` or `datadoghq.eu`), Sentry (plugin probe still a stub in this build).
 - **Optional:** a GitHub token for issue previews. The pipeline keeps its own tickets without it.
 
 ## Plays nice with your own Claude usage
