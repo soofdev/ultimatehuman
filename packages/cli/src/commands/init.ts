@@ -37,9 +37,9 @@ function gitTopLevel(): string | undefined {
   }
 }
 
-function gitRemoteRepo(): string | undefined {
+function gitRemoteRepo(cwd?: string): string | undefined {
   try {
-    const url = execFileSync("git", ["remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    const url = execFileSync("git", ["remote", "get-url", "origin"], { cwd, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     return /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(url)?.[1];
   } catch {
     return undefined;
@@ -318,7 +318,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
             id: "sentry.setup",
             label: `Finish the Sentry setup in ${target.name}`,
             why: `No error tracker yet. The init is ready on branch ${patch.branch}; once it is deployed with a DSN, real exceptions reach the radar.`,
-            unlock: patch.steps.join(" "),
+            unlock: patch.steps.map((x, n) => `(${n + 1}) ${x}`).join(" "),
             tier: "silver",
             plugin: "sentry",
             envVars: ["SENTRY_AUTH_TOKEN"],
@@ -414,7 +414,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
       projectId = flags.project;
     } else if (projects.length > 1) {
       // Inside a checkout, the project named like the repo is the likely answer ("Jalsa app" for .../jalsa).
-      const slug = (process.env.ULTIMATEHUMAN_GITHUB_REPO ?? gitRemoteRepo())?.split("/")[1]?.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const slug = (process.env.ULTIMATEHUMAN_GITHUB_REPO ?? gitRemoteRepo(repos[0]?.path))?.split("/")[1]?.toLowerCase().replace(/[^a-z0-9]/g, "");
       const match = slug ? projects.findIndex((x) => x.name.toLowerCase().replace(/[^a-z0-9]/g, "").includes(slug)) : -1;
       const def = match >= 0 ? match : Math.max(0, projects.findIndex((x) => String(x.id) === projectId));
       if (flags.nonInteractive) projectId = String(projects[def]!.id);
@@ -478,7 +478,8 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     notifications[p.manifest.id] = { enabled: true, credentials: { [secret.key]: `\${${found[p.manifest.id]!.env}}`, ...plain }, options };
   }
 
-  const repoDefault = process.env.ULTIMATEHUMAN_GITHUB_REPO ?? gitRemoteRepo();
+  // The first watched repo's remote, not the folder init runs in (bootstrap.sh runs it from its own checkout).
+  const repoDefault = process.env.ULTIMATEHUMAN_GITHUB_REPO ?? (repos[0] ? gitRemoteRepo(repos[0].path) : undefined);
   console.log("");
   const repo = flags.repo ?? (flags.nonInteractive ? repoDefault ?? "" : await ask("GitHub repo for issue previews (optional, owner/name; Enter to skip):", repoDefault));
   if (repo) {
@@ -487,7 +488,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
       credentials: { ...(gh ? { token: `\${${gh.env}}` } : {}), repo },
       options: { labels: ["ultimatehuman"], dryRun: true },
     };
-    const how = flags.repo ? "from --repo" : process.env.ULTIMATEHUMAN_GITHUB_REPO ? "from $ULTIMATEHUMAN_GITHUB_REPO" : repo === repoDefault && repoDefault ? "from this folder's git remote" : "typed";
+    const how = flags.repo ? "from --repo" : process.env.ULTIMATEHUMAN_GITHUB_REPO ? "from $ULTIMATEHUMAN_GITHUB_REPO" : repo === repoDefault && repoDefault ? `from ${repos[0]!.name}'s git remote` : "typed";
     line.ok("GitHub", `${repo} · ${c.muted(`${how} · dry run: issues are previewed, never created`)}`);
     add({ id: "github.repo", label: "GitHub", status: "ok", summary: `Issues go to ${repo} (${how})`, detail: "Dry run: issues are rendered and previewed, never created" });
   }
@@ -514,7 +515,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     addPending({ id: "testurl", label: "A deployed test/staging URL", why: "It is how the AI confirms a finding is real on the running product, not just in the data. Needed for Gold.", unlock: `Ask the chat to set it, or set repos[0].testUrl (staging only, never production).`, tier: "gold", gradeCheck: "testUrl" });
   }
   if (!Object.keys(notifications).length) {
-    addPending({ id: "notifications", label: "Phone notifications (Telegram)", why: "So new findings and setup upgrades reach you without opening the dashboard. Part of Silver.", unlock: "Ask the chat to turn on chat.telegram with a BotFather token (`ultimatehuman key UH_CHAT_BOT_TOKEN`), or export TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and rerun init.", tier: "silver", gradeCheck: "notifications" });
+    addPending({ id: "notifications", label: "Phone notifications (Telegram)", why: "So new findings and setup upgrades reach you without opening the dashboard. Part of Silver.", unlock: "Save a BotFather token with `ultimatehuman key UH_CHAT_BOT_TOKEN`, then ask the chat to turn on chat.telegram (enabled: true, botToken \"${UH_CHAT_BOT_TOKEN}\"); or export TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and rerun init.", tier: "silver", gradeCheck: "notifications" });
   }
   closePrompts();
   mark("questions");
@@ -530,7 +531,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     line.err("Engine", flags.port ? `port ${port} belongs to another ultimatehuman install` : "ports 4747-4767 are all taken by other ultimatehuman installs");
     return 1;
   }
-  if (port !== 4747) line.ok("Port", `${port} ${c.muted("· 4747 belongs to another ultimatehuman install on this machine")}`);
+  if (port !== 4747 && !flags.port) line.ok("Port", `${port} ${c.muted("· 4747 belongs to another ultimatehuman install on this machine")}`);
   const config = {
     version: 1,
     ...(port !== 4747 ? { server: { port } } : {}),

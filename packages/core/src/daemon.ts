@@ -466,6 +466,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       patchConfig,
       configPath,
       log,
+      // init skips the first pass when no tracker is connected: it starts as soon as one is.
+      onSourceConnected: () => {
+        if (store.listRuns(1).length) return;
+        const run = radar.trigger("onboarding");
+        log(`first pass started now that a source is connected: ${run.id}`);
+      },
       announce: async (text) => {
         const msg = store.addChat({ role: "assistant", text, source: "dashboard" });
         emit({ type: "chat.message", message: msg });

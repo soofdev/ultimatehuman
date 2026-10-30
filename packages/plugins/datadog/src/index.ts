@@ -41,7 +41,7 @@ export const normalizeMessage = (m: string) =>
   m
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>")
     .replace(/\b[0-9a-f]{16,}\b/gi, "<hex>")
-    .replace(/\d+/g, "#")
+    .replace(/\b\d+\b/g, "#")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 160);

@@ -27,6 +27,8 @@ export interface ConciergeDeps {
   configPath: string;
   /** Posts an assistant message into the chat (all doors). */
   announce: (text: string) => Promise<void>;
+  /** Called after a source plugin was switched on (the daemon starts the first pass if none ran yet). */
+  onSourceConnected?: () => void;
   log: (m: string) => void;
 }
 
@@ -86,4 +88,5 @@ export async function checkPending(d: ConciergeDeps): Promise<void> {
   lines.push(left.length ? `Still pending: ${left.map((p) => p.label).join(", ")}.` : "Nothing left pending.");
   d.log(`pending resolved: ${[...ids].join(", ")}; grade ${before.tier ?? "none"} -> ${after.tier ?? "none"}`);
   await d.announce(lines.join("\n"));
+  if (done.some((x) => x.probe)) d.onSourceConnected?.();
 }
