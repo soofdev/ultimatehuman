@@ -20,7 +20,7 @@ Each tier needs **every check of its own tier and of all tiers below it**.
 - `claude`: the `claude` CLI is found (`~/.local/bin/claude`, `$PATH`, or `ULTIMATEHUMAN_CLAUDE_BIN`)
 
 **Silver** — it runs unattended, safely
-- `notifications`: `notifications.telegram.enabled` is on
+- `notifications`: `notifications.telegram.enabled` is on, or the Telegram door of the setup chat is (`chat.telegram.enabled` with a `botToken` ref, see [chat.md](chat.md)). Either way the install can reach you on your phone.
 - `guard`: a usage guard is on: `governor.humanReservePct > 0`, or an API-key source (which requires `dailyCapUsd`)
 
 **Gold** — it closes the loop on a test environment

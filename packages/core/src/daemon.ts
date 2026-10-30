@@ -18,6 +18,7 @@ import { ruleProposal } from "./instructions/proposals";
 import { Notifier } from "./notify/notifier";
 import { gradeSetup, gradeProbes } from "./setup/grade";
 import { Chat, mergePatch } from "./chat/chat";
+import { ChatTelegram } from "./chat/telegram";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -163,6 +164,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     emit,
     log,
   });
+  const chatTelegram = new ChatTelegram({ store, chat, getConfig: () => config, configPath, log });
 
   server = await startServer({
     host: config.server.host,
@@ -404,6 +406,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   });
 
   radar.rearm();
+  chatTelegram.start();
   // Hot reload: a hand edit is validated; an invalid file keeps the last good config and logs why.
   // Watch the directory, not the file: writeConfig replaces the file by rename, which a file watch does not survive.
   let reload: NodeJS.Timeout | null = null;
@@ -433,6 +436,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     radar,
     stop: async () => {
       clearInterval(tick);
+      chatTelegram.stop();
       await new Promise<void>((r) => server!.server.close(() => r()));
     },
   };

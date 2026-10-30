@@ -43,11 +43,12 @@ export interface SetupGrade {
 export function gradeSetup(cfg: Config, raw: Record<string, any>, p: GradeProbes): SetupGrade {
   const repos = cfg.repos ?? [];
   const tg = cfg.notifications?.telegram;
+  const chatTg = cfg.chat?.telegram;
   const hasKeyCap = cfg.auth.sources.some((s) => s.kind === "anthropic_api_key");
   const checks: GradeCheck[] = [
     { id: "repos", tier: "bronze", label: "At least one repo configured and on disk", ok: repos.length > 0 && repos.every((r) => p.reposPresent.includes(r.name)), hint: repos.length ? `Fix the path of: ${repos.filter((r) => !p.reposPresent.includes(r.name)).map((r) => r.name).join(", ")}` : "Add a repo to `repos` in the config (name + local path)." },
     { id: "claude", tier: "bronze", label: "claude CLI found on this machine", ok: p.claudeCli, hint: "Install Claude Code and log in (`claude`), or set ULTIMATEHUMAN_CLAUDE_BIN." },
-    { id: "notifications", tier: "silver", label: "Notifications on", ok: !!tg?.enabled, hint: "Turn on notifications.telegram (bot token as a ${ENV_VAR} ref + chat id)." },
+    { id: "notifications", tier: "silver", label: "Notifications or Telegram chat on", ok: !!tg?.enabled || !!(chatTg?.enabled && chatTg.botToken), hint: "Turn on notifications.telegram (bot token as a ${ENV_VAR} ref + chat id), or chat.telegram (bot token ref)." },
     { id: "guard", tier: "silver", label: "Usage guard on (window reserve or API daily cap)", ok: cfg.governor.humanReservePct > 0 || hasKeyCap, hint: "Set governor.humanReservePct above 0 (default 30)." },
     { id: "fixLoop", tier: "gold", label: "Fix loop enabled", ok: cfg.features.fixLoop, hint: "Turn on features.fixLoop (reserved: the fix loop ships later)." },
     { id: "validationGate", tier: "gold", label: "Validation gate decided (on or off, explicitly)", ok: typeof raw?.features?.validationGate === "boolean", hint: "Choose on or off for the validation gate in Config > Features." },
