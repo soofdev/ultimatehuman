@@ -98,7 +98,7 @@ export class PassExecutor {
     if (repos.length) {
       run.repos = repos;
       run.notes.push(`Code connected read-only: ${repos.map((r) => `${r.name} (${r.path}${r.commit ? ` at ${r.commit.slice(0, 10)}` : ""})`).join(", ")}. Agents may Read/Grep it; code pointers are re-checked against the files.`);
-    } else run.notes.push("No code connected: root causes stay at the level the analytics data supports.");
+    } else run.notes.push("No code connected: root causes stay at the level the evidence supports.");
     this.active = run;
     this.save(run);
     void this.execute(run).catch((e) => this.fail(run, e));

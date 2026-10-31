@@ -127,7 +127,7 @@ Answer with ONLY one JSON object, no prose before or after:
   "verdict": "finding" | "no_finding",
   "reason": "one sentence: why this is or is not a finding",
   "title": "...", "severity": "critical|high|medium|low", "confidence": "confirmed|likely",
-  "symptom": "one paragraph, what users experience, no speculation",
+  "symptom": "one paragraph, what happens (what users or the system experience), no speculation",
   "rootCause": {
     "statement": "...",
     "reasoning": [ { "claim": "...", "evidenceIds": ["S1","T2"], "quotes": [ { "evidenceId": "T2", "text": "exact substring of evidence/T2.txt" } ] } ],
