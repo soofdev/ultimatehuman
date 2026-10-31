@@ -9,9 +9,15 @@
   },
   governor: { humanReservePct: 30 },
   radar: { schedule: "0 7 * * *", lookbackHours: 24 },
+  // Local checkouts the agents read. Each keeps its own git/GitHub auth: no token here.
+  repos: [
+    { name: "web", path: "/home/me/code/web", testUrl: "https://staging.example.com" },
+    // { name: "api", path: "/home/me/code/api", notes: "Python backend" },
+  ],
   plugins: {
     sentry: { credentials: { authToken: "${SENTRY_AUTH_TOKEN}" } },
-    github: { credentials: { token: "${GITHUB_TOKEN}", repo: "owner/repo" } },
+    // Optional: issue previews only (dry run). The pipeline keeps its own tickets without it.
+    // github: { credentials: { token: "${GITHUB_TOKEN}", repo: "owner/repo" } },
   },
   // Off by default. Each new finding arrives as a card photo; empty days send nothing.
   // notifications: {

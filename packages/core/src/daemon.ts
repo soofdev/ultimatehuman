@@ -1,10 +1,12 @@
 import { watch } from "node:fs";
 import { appendFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, dirname, basename } from "node:path";
 import type { Finding, Plugin } from "@ultimatehuman/sdk";
 import type { Config } from "./config/schema";
-import { configJsonSchema } from "./config/schema";
-import { loadConfig, loadRawConfig, defaultConfigPath, resolveSecretRefs, type SecretRefValue } from "./config/load";
+import JSON5 from "json5";
+import { configJsonSchema, MODEL_CHOICES, MODEL_STAGES, DEFAULT_MODEL } from "./config/schema";
+import { loadConfig, loadRawConfig, writeConfig, defaultConfigPath, resolveSecretRefs, type SecretRefValue } from "./config/load";
 import { ensureHome, controlKey } from "./home";
 import { Store } from "./store/store";
 import { WindowTracker } from "./governor/tracker";
@@ -15,6 +17,13 @@ import { buildCockpit, backfillFindingClusters } from "./cockpit";
 import { Instructions, InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, estimateTokens, validateBrief, type BriefId } from "./instructions/instructions";
 import { ruleProposal } from "./instructions/proposals";
 import { Notifier } from "./notify/notifier";
+import { gradeSetup, gradeProbes } from "./setup/grade";
+import { setupStatusText } from "./setup/pending";
+import { checkPending, currentGrade } from "./setup/concierge";
+import { loadEngineEnv } from "./envfile";
+import { Chat, mergePatch } from "./chat/chat";
+import { ChatTelegram } from "./chat/telegram";
+import { allowedFile, fileType, saveToInbox, sentNote } from "./chat/files";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -34,6 +43,8 @@ export interface DaemonOptions {
  */
 export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const home = ensureHome();
+  // Secrets init saved to engine.env (an exported variable wins); re-read every minute by the pending check.
+  loadEngineEnv();
   const configPath = defaultConfigPath();
   let config: Config = await loadConfig(configPath);
   const loopback = ["127.0.0.1", "::1", "localhost"].includes(config.server.host);
@@ -139,6 +150,34 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     return { dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true, repo: o ? String(config.plugins[o.manifest.id]?.credentials?.repo ?? "") : "" };
   };
 
+  /** Dashboard edits: patch the file as written (not the defaulted config), validate, write, and use it at once. */
+  const patchConfig = async (patch: (raw: Record<string, any>) => void) => {
+    const raw = JSON5.parse(await loadRawConfig(configPath)) as Record<string, any>;
+    patch(raw);
+    config = await writeConfig(raw, configPath, "// ultimatehuman config. Secrets are ${ENV_VAR} references only. Edited from the dashboard; every write validates first.");
+    emit({ type: "config.updated" });
+    return config;
+  };
+
+  const gradeDeps = { getConfig: () => config, readRawConfig: () => loadRawConfig(configPath), plugins: opts.plugins };
+  const scopesByPlugin = Object.fromEntries(opts.plugins.map((p) => [p.manifest.id, p.manifest.requiredScopes]));
+  const chat = new Chat({
+    home,
+    store,
+    getConfig: () => config,
+    readRawConfig: () => loadRawConfig(configPath),
+    applyPatch: async (p) => {
+      await patchConfig((raw) => mergePatch(raw, p));
+    },
+    runnerEnv,
+    emit,
+    log,
+    setupStatus: async () => setupStatusText(config, await currentGrade(gradeDeps), scopesByPlugin),
+  });
+  /** The only places chat files may be served or sent from: the install home and the configured repos. */
+  const chatRoots = () => [home, ...config.repos.map((r) => r.path)];
+  const chatTelegram = new ChatTelegram({ store, chat, home, chatRoots, getConfig: () => config, configPath, log });
+
   server = await startServer({
     host: config.server.host,
     port: config.server.port,
@@ -182,7 +221,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       "POST /api/findings/:id/file": async (_r, _b, p) => {
         const x = issueFor(p.id!);
         if (!x) return { status: 404, json: { error: "no such finding" } };
-        const o = output()!;
+        const o = output();
+        if (!o) {
+          // No issue tracker configured: the pipeline owns its tickets, so "file" just accepts the ticket here.
+          const cid = (x.f as any).clusterId as string | undefined;
+          if (cid) rule(cid, "file", null, { dryRun: true, repo: "" });
+          log(`accepted (no issue tracker configured): ${x.issue.title}`);
+          return { json: { dryRun: true, message: "accepted - no issue tracker is configured", issue: x.issue, repo: "" } };
+        }
         const ctx = { credentials: await resolveCredentials(o.manifest.id).catch(() => ({ repo: x.repo })), options: config.plugins[o.manifest.id]?.options ?? {}, http: null as any, log: () => {}, signal: new AbortController().signal };
         const filed = await (o as any).output.file(ctx, x.f);
         const rec = { at: new Date().toISOString(), repo: x.repo, ref: filed.ref, title: x.issue.title };
@@ -209,6 +255,26 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           emit({ type: "finding.updated", finding: f });
         }
         return { json: { ok: true } };
+      },
+      // features.validationGate: promote (validate), hold (later) or dismiss a finding waiting for validation.
+      "POST /api/findings/:id/validate": async (_r, body, p) => {
+        const f = store.getFinding(p.id!) as (Finding & Record<string, any>) | undefined;
+        if (!f) return { status: 404, json: { error: "no such finding" } };
+        const action = String(body.action ?? "");
+        if (!["validate", "later", "dismiss"].includes(action)) return { status: 400, json: { error: "action must be validate, later or dismiss" } };
+        const at = new Date().toISOString();
+        if (action === "dismiss") {
+          const reason = String(body.note ?? "").trim() || "dismissed at validation";
+          f.validation = { state: "dismissed", at };
+          store.saveFinding(f);
+          if (f.clusterId) rule(f.clusterId, "dismiss", reason);
+        } else {
+          f.validation = { state: action === "validate" ? "validated" : "later", at };
+          store.saveFinding(f);
+          emit({ type: "finding.updated", finding: f });
+        }
+        log(`validation: ${action} on ${f.id}`);
+        return { json: { ok: true, finding: store.getFinding(f.id) } };
       },
       "GET /api/cockpit": async () => ({ json: { ...buildCockpit(store, radar.current(), dryRunOutput()), proposals: store.listProposals(30), instructionsVersion: instructions.current().version.version } }),
       "POST /api/rulings": async (_r, body) => {
@@ -302,25 +368,128 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           return { status: e instanceof InstructionError ? e.status : 500, json: { error: (e as Error).message } };
         }
       },
+      "GET /api/models": async () => ({ json: { stages: MODEL_STAGES, choices: MODEL_CHOICES, default: DEFAULT_MODEL, models: config.models, envOverride: process.env.ULTIMATEHUMAN_MODEL ?? null } }),
+      "POST /api/config/models": async (_r, body) => {
+        const known = new Set<string>(MODEL_STAGES.map((st) => st.id));
+        const entries = Object.entries(body ?? {}).filter(([k, v]) => known.has(k) && typeof v === "string");
+        if (!entries.length) return { status: 400, json: { error: "send { <stage>: <model id> }" } };
+        try {
+          const c = await patchConfig((raw) => (raw.models = { ...(raw.models ?? {}), ...Object.fromEntries(entries) }));
+          log(`models updated: ${entries.map(([k, v]) => `${k}=${v}`).join(", ")}`);
+          return { json: { ok: true, models: c.models } };
+        } catch (e) {
+          return { status: 400, json: { error: (e as Error).message } };
+        }
+      },
+      "GET /api/setup-grade": async () => {
+        const raw = JSON5.parse(await loadRawConfig(configPath)) as Record<string, any>;
+        return { json: { ...gradeSetup(config, raw, gradeProbes(config, opts.plugins.filter((p) => p.manifest.kind === "source").map((p) => p.manifest.id))), pending: config.pending ?? [] } };
+      },
+      "GET /api/features": async () => {
+        const props = ((configJsonSchema() as any).properties?.features?.properties ?? {}) as Record<string, { description?: string }>;
+        return { json: { features: Object.entries(config.features).map(([id, on]) => ({ id, on, description: props[id]?.description ?? "", reserved: /^Reserved/.test(props[id]?.description ?? "") })) } };
+      },
+      "POST /api/config/features": async (_r, body) => {
+        const known = new Set(Object.keys(config.features));
+        const entries = Object.entries(body ?? {}).filter(([k, v]) => known.has(k) && typeof v === "boolean");
+        if (!entries.length) return { status: 400, json: { error: "send { <feature>: true|false }" } };
+        try {
+          const c = await patchConfig((raw) => (raw.features = { ...(raw.features ?? {}), ...Object.fromEntries(entries) }));
+          log(`features updated: ${entries.map(([k, v]) => `${k}=${v ? "on" : "off"}`).join(", ")}`);
+          return { json: { ok: true, features: c.features } };
+        } catch (e) {
+          return { status: 400, json: { error: (e as Error).message } };
+        }
+      },
+      "GET /api/chat": async () => ({ json: { messages: chat.history(), busy: chat.busy() } }),
+      "GET /api/chat/file": async (req) => {
+        const path = allowedFile(new URL(req.url ?? "/", "http://x").searchParams.get("path") ?? "", chatRoots());
+        if (!path) return { status: 403, json: { error: "only files inside the install home or a configured repo are served" } };
+        const type = fileType(path);
+        if (!type.startsWith("image/")) return { status: 415, json: { error: "only images are shown inline" } };
+        return { file: { data: await readFile(path), type } };
+      },
+      "POST /api/chat": async (_r, body) => {
+        let text = String(body.text ?? "").trim();
+        const source = body.source === "cli" ? "cli" : "dashboard";
+        const files = Array.isArray(body.files) ? (body.files as any[]) : [];
+        if (!text && !files.length) return { status: 400, json: { error: "send { text } and/or { files: [{ name, data }] }" } };
+        if (text.length > 8000) return { status: 400, json: { error: "keep a message under 8000 characters" } };
+        if (files.length > 4) return { status: 400, json: { error: "attach at most 4 files" } };
+        const decoded = files.map((f) => ({ name: String(f?.name ?? "image.png"), data: Buffer.from(String(f?.data ?? ""), "base64") }));
+        const bad = decoded.find((f) => !f.data.length || f.data.length > 10 * 1024 * 1024 || !fileType(f.name).startsWith("image/"));
+        if (bad) return { status: 400, json: { error: `${bad.name}: send an image (png, jpg, webp, gif, svg) under 10 MB` } };
+        // Bridge convention: the file lands in the inbox and the prompt carries one line per file.
+        for (const f of decoded) {
+          const path = saveToInbox(home, f.name, f.data);
+          text = text ? `${text}\n${sentNote("photo", path)}` : sentNote("photo", path);
+        }
+        const t = chat.send(text, source);
+        // The CLI waits for the reply; the dashboard returns at once and polls.
+        if (body.wait === true) return { json: { user: t.user, reply: await t.reply } };
+        void t.reply.catch((e) => log(`chat turn crashed: ${(e as Error).message}`));
+        return { status: 202, json: { user: t.user, busy: chat.busy() } };
+      },
       "GET /api/config": async () => ({ json: { path: configPath, raw: await loadRawConfig(configPath), config, schema: configJsonSchema() } }),
     },
   });
 
   radar.rearm();
+  chatTelegram.start();
   // Hot reload: a hand edit is validated; an invalid file keeps the last good config and logs why.
-  watch(configPath, async () => {
-    try {
-      config = await loadConfig(configPath);
-      log("config reloaded");
-    } catch (e) {
-      log(`config invalid, keeping the last good one: ${(e as Error).message}`);
-    }
+  // Watch the directory, not the file: writeConfig replaces the file by rename, which a file watch does not survive.
+  let reload: NodeJS.Timeout | null = null;
+  watch(dirname(configPath), (_ev, name) => {
+    if (name !== basename(configPath)) return;
+    if (reload) clearTimeout(reload);
+    reload = setTimeout(async () => {
+      try {
+        // A config that now references a key saved with `ultimatehuman key` resolves at once, not on the next minute check.
+        loadEngineEnv();
+        config = await loadConfig(configPath);
+        log("config reloaded");
+      } catch (e) {
+        log(`config invalid, keeping the last good one: ${(e as Error).message}`);
+      }
+    }, 100);
   });
   // Minimal daily cron ("M H * * *").
   const cron = /^(\d+)\s+(\d+)\s+\*\s+\*\s+\*$/.exec(config.radar.schedule);
+  // Pending ledger: once a minute on the same tick (plus once at boot), clear what got done and say so.
+  let checking = false;
+  const pendingCheck = () => {
+    if (checking) return;
+    checking = true;
+    void checkPending({
+      store,
+      plugins: opts.plugins,
+      getConfig: () => config,
+      readRawConfig: () => loadRawConfig(configPath),
+      patchConfig,
+      configPath,
+      log,
+      // init skips the first pass when no tracker is connected: it starts as soon as one is.
+      onSourceConnected: () => {
+        if (store.listRuns(1).length) return;
+        const run = radar.trigger("onboarding");
+        log(`first pass started now that a source is connected: ${run.id}`);
+      },
+      announce: async (text) => {
+        const msg = store.addChat({ role: "assistant", text, source: "dashboard" });
+        emit({ type: "chat.message", message: msg });
+        emit({ type: "config.updated" });
+        await chatTelegram.push(text).catch((e) => log(`chat telegram: upgrade note not sent: ${(e as Error).message}`));
+      },
+    })
+      .catch((e) => log(`pending check failed: ${(e as Error).message}`))
+      .finally(() => (checking = false));
+  };
+  setTimeout(pendingCheck, 3000);
+  let ticks = 0;
   const tick = setInterval(() => {
     const d = new Date();
     if (cron && d.getMinutes() === Number(cron[1]) && d.getHours() === Number(cron[2]) && d.getSeconds() < 30) radar.trigger("schedule");
+    if (++ticks % 2 === 0) pendingCheck();
   }, 30_000);
   writeFileSync(join(home, "engine.pid"), String(process.pid));
   log(`daemon up on ${config.server.host}:${config.server.port} (pid ${process.pid})`);
@@ -330,6 +499,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     radar,
     stop: async () => {
       clearInterval(tick);
+      chatTelegram.stop();
       await new Promise<void>((r) => server!.server.close(() => r()));
     },
   };

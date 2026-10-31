@@ -1,12 +1,65 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, History, Radar, SearchCheck } from "lucide-react";
-import { post } from "../api";
+import { ArrowRight, CircleDashed, History, Radar, SearchCheck } from "lucide-react";
+import { get, post } from "../api";
 import type { AppState } from "../App";
 import { Ico, RunTimeline, startedLine } from "../Timeline";
 import { FindingCard } from "../FindingCard";
 import { timeS, dur } from "../fmt";
 
-const ORDER = ["claude", "posthog", "sentry", "github", "code"];
+const ORDER = ["claude", "code", "posthog", "sentry", "datadog", "github", "telegram"];
+const TIER: Record<string, string> = { bronze: "Bronze", silver: "Silver", gold: "Gold", platinum: "Platinum" };
+
+/** Setup grade + the pending ledger (what init skipped and why it matters). Re-read every 15 s: the engine clears items as they get done. */
+function GradeCard() {
+  const [g, setG] = useState<any>(null);
+  useEffect(() => {
+    const load = () => void get("/api/setup-grade").then(setG).catch(() => {});
+    load();
+    const t = setInterval(load, 15_000);
+    return () => clearInterval(t);
+  }, []);
+  if (!g) return null;
+  const pending: any[] = g.pending ?? [];
+  return (
+    <section className="card" data-setup-grade={g.tier ?? "none"}>
+      <div className="card-h">
+        <h3>
+          Setup grade <span className={`tier-pill tier-${g.tier ?? "none"}`} data-grade-tier>{g.tier ? TIER[g.tier] : "Not set up"}</span>
+        </h3>
+        <span className="sub">{g.next ? `next: ${TIER[g.next]}` : "top tier"} · everything is optional</span>
+      </div>
+      <div className="card-b">
+        {g.next && g.unlocks.length > 0 && (
+          <div className="unlocks" data-unlocks>
+            <b>What unlocks {TIER[g.next]}</b>
+            <ul>
+              {g.unlocks.map((u: any) => (
+                <li key={u.id}>
+                  <span>{u.label}.</span> {u.hint}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="pending-h">
+          <b>Pending</b> <span className="sub">{pending.length ? `${pending.length} skipped at install · cleared automatically when done · ask the Chat “what's missing?”` : "nothing skipped at install"}</span>
+        </div>
+        {pending.map((p) => (
+          <div className="check" key={p.id} data-pending={p.id}>
+            <CircleDashed size={16} color="var(--warn, #b45309)" style={{ marginTop: 2 }} />
+            <div className="who">{p.tier ? TIER[p.tier] : ""}</div>
+            <div className="what">
+              {p.label}
+              <small>{p.why}</small>
+              <small>→ {p.unlock}</small>
+            </div>
+            <div className="when">{timeS(p.since)}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 export function Setup({ s, land }: { s: AppState; land: () => void }) {
   const ob = s.onboarding;
@@ -38,13 +91,15 @@ export function Setup({ s, land }: { s: AppState; land: () => void }) {
   return (
     <div className="stack">
       <div>
-        <h1 className="h1">{first ? "Your first finding is in." : wider ? (done ? `${days}-day pass complete.` : `Looking back ${days} days.`) : done ? "First pass complete." : "You're set up. The first pass is running."}</h1>
+        <h1 className="h1">{first ? "Your first finding is in." : wider ? (done ? `${days}-day pass complete.` : `Looking back ${days} days.`) : done ? "First pass complete." : run ? "You're set up. The first pass is running." : "You're set up. The radar waits for a tracker."}</h1>
         <p className="lede">
           {first
             ? "Root-caused from your own PostHog data, checked by a gate and a second agent that tried to break it. Every claim links back to the data."
             : "Everything below was detected and checked live by init. Nothing is written anywhere: the radar only reads your trackers."}
         </p>
       </div>
+
+      <GradeCard />
 
       <section className="card" data-pipeline-note>
         <div className="card-h">

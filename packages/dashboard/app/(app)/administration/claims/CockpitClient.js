@@ -73,6 +73,20 @@ function KeyBadge({ ticketKey }) {
   );
 }
 
+// ultimatehuman: which configured repo a ticket is about (config repos[].name). Absent = no badge.
+function RepoBadge({ repo }) {
+  if (!repo) return null;
+  return (
+    <span
+      data-repo-badge={repo}
+      title={`Repo: ${repo}`}
+      className="shrink-0 whitespace-nowrap rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 font-mono text-[11px] font-medium text-indigo-700"
+    >
+      {repo}
+    </span>
+  );
+}
+
 // Label beside the text up to xl; from xl the three rows sit side by side as columns.
 function PlainRow({ label, children }) {
   if (!children) return null;
@@ -1590,6 +1604,7 @@ function CardHeader({ ticket, onUpdate }) {
     <>
       <div className="flex items-center gap-2">
         <KeyBadge ticketKey={ticket.key} />
+        <RepoBadge repo={ticket.repo} />
         <p className="min-w-0 flex-1 truncate text-xs text-gray-400" title={ticket.title}>{ticket.title}</p>
         <TicketDates ticket={ticket} />
         <CancelButton ticket={ticket} onUpdate={onUpdate} />
@@ -1852,6 +1867,7 @@ function BuildingList({ tickets, onUpdate }) {
             <li key={t.key} data-building-row={t.key} className="flex flex-col gap-1 px-4 py-3 sm:px-5">
               <div className="flex flex-wrap items-center gap-2">
                 <KeyBadge ticketKey={t.key} />
+                <RepoBadge repo={t.repo} />
                 <span data-fix-stage={t.fix_round?.stage} className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-inset ring-amber-300">
                   <WrenchScrewdriverIcon className="h-3 w-3" aria-hidden />
                   {d ? `Fix in progress, requested ${chatWhen(d.at)}` : 'Fix in progress'}
@@ -1895,6 +1911,7 @@ function ShippedList({ tickets, onUpdate, empty }) {
               {cancelled && t.cancel?.reason && <p className="mt-0.5 text-xs text-gray-500">Reason: {t.cancel.reason}</p>}
               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
                 <KeyBadge ticketKey={t.key} />
+                <RepoBadge repo={t.repo} />
                 {mergePlan(t.prs).map(({ pr: p }) => (
                   <a key={`${p.repo}#${p.number}`} href={p.url} target="_blank" rel="noopener noreferrer" className={cancelled ? 'text-gray-500 hover:text-gray-800' : 'text-indigo-700 hover:text-indigo-900'}>
                     {prLabel(p)}{cancelled && ' (closed)'}
@@ -1933,6 +1950,7 @@ function ManualList({ tickets, onUpdate, empty }) {
           <article key={t.key} data-manual-card={t.key} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
             <div className="flex flex-wrap items-center gap-2">
               <KeyBadge ticketKey={t.key} />
+              <RepoBadge repo={t.repo} />
               <span className={`${PILL} bg-red-50 text-red-800 ring-red-200`}>
                 <PauseIcon className="h-3.5 w-3.5 text-red-600" aria-hidden />
                 Stopped over budget

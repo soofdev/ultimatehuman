@@ -49,6 +49,8 @@ export interface ClaudeRunOptions {
   timeoutMs?: number;
   /** Extra read-only directories (the connected repo checkout). Tools stay Read/Grep/Glob. */
   addDirs?: readonly string[];
+  /** Appended to Claude Code's system prompt (the setup chat's role and rules). */
+  appendSystemPrompt?: string;
 }
 
 export function claudeBin(): string {
@@ -85,12 +87,14 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     "--max-turns", String(opts.maxTurns),
     "--strict-mcp-config",
     "--setting-sources", "",
-    "--disallowedTools", ...DENIED,
+    // A tool the caller allows on purpose is not denied wholesale; a path-scoped Edit(...) rule also scopes Write.
+    "--disallowedTools", ...DENIED.filter((t) => !tools.some((a) => { const n = a.split("(")[0]; return n === t || (n === "Edit" && t === "Write"); })),
   ];
   if (tools.length) args.push("--allowedTools", ...tools);
   else args.push("--tools", "");
   if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
   for (const d of opts.addDirs ?? []) args.push("--add-dir", d);
+  if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
 
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {

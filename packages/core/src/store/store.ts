@@ -28,7 +28,18 @@ const MIGRATIONS: string[] = [
   // Agent proposals to amend the instruction briefs (SPEC 7b). The human's rulings on them live in the json (history).
   `CREATE TABLE proposals (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, brief TEXT NOT NULL, status TEXT NOT NULL,
      created_at TEXT NOT NULL, json TEXT NOT NULL);`,
+  // The one shared setup chat. source = the door the message came through (dashboard, cli, telegram); the agent's replies carry the door they answer.
+  `CREATE TABLE chat (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, text TEXT NOT NULL, source TEXT NOT NULL, ts TEXT NOT NULL);`,
 ];
+
+export type ChatSource = "dashboard" | "cli" | "telegram";
+export interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+  source: ChatSource;
+  ts: string;
+}
 
 export interface ProposalRuling {
   ruling: "apply" | "reject" | "park";
@@ -217,6 +228,17 @@ export class Store {
 
   setKv(key: string, value: unknown): void {
     this.db.prepare("INSERT OR REPLACE INTO kv(key,json) VALUES(?,?)").run(key, JSON.stringify(value));
+  }
+
+  addChat(m: Omit<ChatMessage, "id" | "ts">): ChatMessage {
+    const ts = new Date().toISOString();
+    const r = this.db.prepare("INSERT INTO chat(role,text,source,ts) VALUES(?,?,?,?)").run(m.role, m.text, m.source, ts);
+    return { ...m, id: Number(r.lastInsertRowid), ts };
+  }
+
+  /** The last `limit` messages, oldest first. */
+  listChat(limit = 200): ChatMessage[] {
+    return (this.db.prepare("SELECT * FROM (SELECT * FROM chat ORDER BY id DESC LIMIT ?) ORDER BY id").all(limit) as any[]).map((r) => ({ id: r.id, role: r.role, text: r.text, source: r.source, ts: r.ts }));
   }
 }
 

@@ -8,7 +8,7 @@ import { LoginLinks } from "./login-links";
 import { homeId } from "../home";
 
 export interface Route {
-  (req: IncomingMessage, body: any, params: Record<string, string>): Promise<{ status?: number; json: unknown }>;
+  (req: IncomingMessage, body: any, params: Record<string, string>): Promise<{ status?: number; json?: unknown; file?: { data: Buffer; type: string } }>;
 }
 
 export interface ServerOptions {
@@ -93,6 +93,11 @@ export function startServer(o: ServerOptions): Promise<RunningServer> {
           const params: Record<string, string> = {};
           r.names.forEach((n, i) => (params[n] = decodeURIComponent(m[i + 1]!)));
           const out = await r.fn(req, body, params);
+          if (out.file) {
+            // Chat files: never sniffed, never framed, and an SVG cannot run script even when opened directly.
+            res.writeHead(out.status ?? 200, { "content-type": out.file.type, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff", "x-frame-options": "DENY", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox" });
+            return res.end(out.file.data);
+          }
           if (path === "/api/status" && sid) (out.json as any).csrf = csrfFor(sid);
           return send(res, out.status ?? 200, out.json);
         }

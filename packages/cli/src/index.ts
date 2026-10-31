@@ -6,6 +6,9 @@ import { doctor } from "./commands/doctor";
 import { configCmd } from "./commands/config";
 import { dashboard } from "./commands/dashboard";
 import { service, serviceInstalled } from "./commands/service";
+import { ci } from "./commands/ci";
+import { chat } from "./commands/chat";
+import { key } from "./commands/key";
 
 const USAGE = `ultimatehuman <command>
 
@@ -14,11 +17,19 @@ const USAGE = `ultimatehuman <command>
   doctor      Check config, credentials, scopes and service; --fix repairs
   config      get <path> | set <path> <value> | schema
   dashboard   Print a single-use dashboard login link
+  chat        The setup chat (same conversation as the dashboard Chat page and Telegram);
+              chat "<message>" sends one message and prints the reply
   stop        Stop the engine started by init
   service     install | uninstall | status (systemd user unit / launchd agent)
+  ci          install [--repo <name|path>] [--base main] [--runner-label <label>] [--model <id>] [--force]
+              writes the PR review check (workflow + .github/review/) into a repo; never commits
 
-Every interactive step has a flag (init: --project <posthog id>, --repo owner/name,
---notify-prefix <text>, --notify-server <url>);
+  key         <ENV_NAME> saves one secret into the engine env file (prompted, never echoed);
+              a pending tracker key is picked up by the running engine within a minute
+
+Every interactive step has a flag (init: --repos <path,path>, --test-url <url>,
+--project <posthog id>, --repo owner/name, --notify-prefix <text>, --notify-server <url>,
+--port <n>);
 pass --non-interactive to take the detected defaults instead of prompting.`;
 
 async function main(argv: string[]): Promise<number> {
@@ -36,6 +47,13 @@ async function main(argv: string[]): Promise<number> {
       repo: { type: "string" },
       "notify-prefix": { type: "string" },
       "notify-server": { type: "string" },
+      repos: { type: "string" },
+      "test-url": { type: "string" },
+      port: { type: "string" },
+      base: { type: "string" },
+      "runner-label": { type: "string" },
+      model: { type: "string" },
+      force: { type: "boolean" },
     },
   });
   const flags = {
@@ -46,6 +64,9 @@ async function main(argv: string[]): Promise<number> {
     ...(typeof values.repo === "string" ? { repo: values.repo } : {}),
     ...(typeof values["notify-prefix"] === "string" ? { notifyPrefix: values["notify-prefix"] } : {}),
     ...(typeof values["notify-server"] === "string" ? { notifyServer: values["notify-server"] } : {}),
+    ...(typeof values.repos === "string" ? { repos: values.repos } : {}),
+    ...(typeof values["test-url"] === "string" ? { testUrl: values["test-url"] } : {}),
+    ...(typeof values.port === "string" && Number(values.port) > 0 ? { port: Number(values.port) } : {}),
   };
   switch (command) {
     case "init":
@@ -58,6 +79,10 @@ async function main(argv: string[]): Promise<number> {
       return configCmd(positionals);
     case "dashboard":
       return dashboard();
+    case "chat":
+      return chat(positionals);
+    case "key":
+      return key(positionals);
     case "stop": {
       if (serviceInstalled()) {
         console.log("the engine runs as a service (it would restart); use `ultimatehuman service uninstall` to stop it");
@@ -78,6 +103,14 @@ async function main(argv: string[]): Promise<number> {
     }
     case "service":
       return service(positionals[0], flags);
+    case "ci":
+      return ci(positionals[0], {
+        ...(typeof values.repo === "string" ? { repo: values.repo } : {}),
+        ...(typeof values.base === "string" ? { base: values.base } : {}),
+        ...(typeof values["runner-label"] === "string" ? { runnerLabel: values["runner-label"] } : {}),
+        ...(typeof values.model === "string" ? { model: values.model } : {}),
+        force: values.force === true,
+      });
     case undefined:
     case "help":
     case "--help":

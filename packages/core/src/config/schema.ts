@@ -50,6 +50,91 @@ const TelegramNotifierSchema = PluginInstanceSchema.extend({
   }),
 });
 
+const RepoSchema = z.object({
+  name: z.string().regex(/^[A-Za-z0-9._-]+$/, "letters, digits, dot, dash, underscore").describe("Short name shown as the repo badge on tickets"),
+  path: z.string().describe("Absolute path of the local checkout"),
+  testUrl: z.url().optional().describe("Staging/test URL for this repo's product, if any"),
+  notes: z.string().optional().describe("Free-form notes the agents read about this repo"),
+});
+export type RepoConfig = z.infer<typeof RepoSchema>;
+
+/**
+ * Pending ledger (docs/setup-grade.md): one entry per setup step the wizard skipped, with why
+ * it matters. The daemon clears an entry when what it waits for shows up (every `envVars`
+ * name is set, or the `gradeCheck` passes), applies its `activate` patch, and says so in the chat.
+ */
+const PendingSchema = z.object({
+  id: z.string().regex(/^[a-z0-9._-]+$/).describe("Stable id, e.g. datadog.key"),
+  label: z.string().describe("What is missing, in a few words"),
+  why: z.string().describe("Why it matters: what the radar gains"),
+  unlock: z.string().describe("The exact next step"),
+  tier: z.enum(["bronze", "silver", "gold", "platinum"]).optional().describe("The setup-grade tier this item helps reach"),
+  plugin: z.string().optional().describe("Plugin id the item is about"),
+  envVars: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).optional().describe("Resolved when every one of these is set (shell or engine.env)"),
+  gradeCheck: z.string().optional().describe("Resolved when this setup-grade check passes"),
+  activate: z.record(z.string(), z.unknown()).optional().describe("Config patch applied when the item resolves (secrets as ${ENV_VAR} refs only)"),
+  since: z.string().describe("ISO time the item was recorded"),
+});
+export type PendingItem = z.infer<typeof PendingSchema>;
+
+/**
+ * Old shape -> new shape, applied to the raw object before validation:
+ * radar.repo.path becomes repos[0] when no repos list exists yet. Idempotent.
+ */
+export function migrateConfig(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const c = raw as Record<string, any>;
+  const legacy = c.radar?.repo?.path;
+  if (typeof legacy === "string" && legacy && !(Array.isArray(c.repos) && c.repos.length)) {
+    const name = legacy.replace(/\/+$/, "").split("/").pop()?.replace(/[^A-Za-z0-9._-]/g, "-") || "repo";
+    const { repo: _drop, ...radar } = c.radar;
+    return { ...c, radar, repos: [{ name, path: legacy }] };
+  }
+  return raw;
+}
+
+/** Models the Config page offers. Any other id is accepted from the file (the claude CLI decides). */
+export const MODEL_CHOICES = [
+  { id: "claude-opus-5-5", label: "Opus 5.5", note: "advised, default" },
+  { id: "claude-fable-5-1", label: "Fable 5.1", note: "" },
+  { id: "claude-sonnet-5", label: "Sonnet 5", note: "" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", note: "" },
+] as const;
+export const DEFAULT_MODEL = "claude-opus-5-5";
+
+/** One model per leg type. `used` = a leg this build runs today; the others are reserved for the fix loop. */
+export const MODEL_STAGES = [
+  { id: "radar", label: "Radar (root cause)", used: true },
+  { id: "review", label: "Adversarial review", used: true },
+  { id: "retrospective", label: "Retrospective (teach proposals)", used: true },
+  { id: "intake", label: "Intake", used: false },
+  { id: "bundle", label: "Bundle", used: false },
+  { id: "fix", label: "Fix", used: false },
+  { id: "exam", label: "Exam (hostile check)", used: false },
+  { id: "chat", label: "Setup chat", used: true },
+] as const;
+export type ModelStage = (typeof MODEL_STAGES)[number]["id"];
+
+const modelId = z.string().regex(/^[A-Za-z0-9._\[\]-]+$/, "a model id like claude-opus-5-5").default(DEFAULT_MODEL);
+const ModelsSchema = z
+  .object(Object.fromEntries(MODEL_STAGES.map((st) => [st.id, modelId.describe(`Model for the ${st.label} leg${st.used ? "" : " (not run by this build yet)"}`)])) as Record<ModelStage, typeof modelId>)
+  .prefault({});
+
+/**
+ * Optional behaviour, one flag each (the reference pipeline's contract): every flag
+ * defaults OFF, and off means behaviour identical to a build without the feature.
+ * Flags marked reserved are parsed and shown in the setup grade but change nothing yet.
+ */
+const FeaturesSchema = z
+  .object({
+    validationGate: z.boolean().default(false)
+      .describe("On: new findings wait in the cockpit's Awaiting validation stage until you promote them. Off: they go straight to Needs decision."),
+    fixLoop: z.boolean().default(false).describe("Reserved: fix legs that open PRs proven in a browser. No effect in this build."),
+    ledger: z.boolean().default(false).describe("Reserved: per-leg spend/usage ledger. No effect in this build."),
+  })
+  .prefault({});
+export type Features = z.infer<typeof FeaturesSchema>;
+
 /** v2-ready: test environments the (future) QA executor may enter. Parsed and validated in v1, unused. */
 const EnvironmentSchema = z.object({
   name: z.string(),
@@ -122,11 +207,15 @@ export const ConfigSchema = z
         retentionDays: z.number().int().min(1).default(30).describe("Run bundles older than this are pruned"),
         repo: z
           .object({
-            path: z.string().optional().describe("Local read-only checkout used for code pointers"),
+            path: z.string().optional().describe("Deprecated: use the top-level repos list. Migrated on load."),
           })
           .prefault({}),
       })
       .prefault({}),
+    features: FeaturesSchema.describe("Optional behaviour. Every flag defaults off; off = behaviour identical."),
+    models: ModelsSchema.describe("Model per leg type. Defaults to claude-opus-5-5 everywhere."),
+    repos: z.array(RepoSchema).default([])
+      .describe("Local checkouts the agents read (and later fix) code in. Each repo keeps its own git/GitHub auth; nothing here is a credential."),
     plugins: z.record(z.string(), PluginInstanceSchema).default({}),
     notifications: z
       .object({
@@ -135,7 +224,21 @@ export const ConfigSchema = z
           .describe("Base URL used in notification links (e.g. a tailnet or tunnel address). Defaults to the local dashboard."),
       })
       .prefault({}),
+    chat: z
+      .object({
+        telegram: z
+          .object({
+            enabled: z.boolean().default(false).describe("Off by default. On: the daemon long-polls this bot; the first chat that writes to it is bound and every other chat is ignored"),
+            botToken: SecretRef.optional().describe("From BotFather. A ${ENV_VAR} ref, never the token itself. Use a bot of its own: getUpdates allows one poller per bot"),
+            apiBase: z.url().default("https://api.telegram.org").describe("Telegram Bot API base URL (point it at a local stub to test)"),
+          })
+          .prefault({})
+          .describe("Setup chat on Telegram: the same conversation as the dashboard Chat page and `ultimatehuman chat`"),
+      })
+      .prefault({})
+      .describe("The setup chat: one conversation, three doors (dashboard, CLI, Telegram)"),
     environments: z.array(EnvironmentSchema).default([]),
+    pending: z.array(PendingSchema).default([]).describe("Setup steps skipped at install, with why they matter. Cleared automatically when done."),
   })
   .strict();
 

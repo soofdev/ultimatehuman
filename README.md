@@ -12,26 +12,47 @@ Most AI dev tools write code nobody asked for and claim it works. ultimatehuman 
 - **Fixes prove themselves (planned).** When fixes arrive in v2, they come as pull requests that must reproduce the bug and then prove the fix in a real browser on your test environment, examined like a hostile reviewer would.
 - **Humans stay in charge.** A human merges, and a human deploys.
 
-## Install (aspirational, not published yet)
-
-```sh
-npx ultimatehuman init
-```
-
 ## Quick start
 
+From a fresh machine (macOS or Linux, no Node needed):
+
 ```sh
-npx ultimatehuman init         # finds your keys, checks each one live, starts the first radar pass
-npx ultimatehuman dashboard    # prints a one-time login link to the local dashboard
-npx ultimatehuman service install   # keep it running (systemd / launchd), daily pass at 07:00
+git clone https://github.com/vincent38wargnier/ultimatehuman.git && cd ultimatehuman
+bash scripts/bootstrap.sh      # Node 22 via nvm if missing -> pnpm -> install -> build -> init
 ```
+
+`bootstrap.sh` is idempotent and never uses sudo (`--no-init` stops after the build). `init` asks
+which repos to watch, scans their dependency manifests for Sentry/PostHog/Datadog SDKs and offers
+to paste a read-only key for each one it finds (saved to `~/.ultimatehuman/engine.env`, 0600; the
+config only holds `${ENV}` refs), asks for a staging URL, and ends on your setup grade plus a
+**pending** list of what you skipped. Nothing is required past a repo and Claude Code: with no
+error tracker at all it offers to write a minimal Sentry init on a new branch of your repo.
+Add a skipped key later with `ultimatehuman key <ENV_NAME>`; the engine picks it up within a minute.
+Then:
+
+```sh
+node packages/cli/dist/cli.mjs dashboard          # one-time login link to the local dashboard
+node packages/cli/dist/cli.mjs service install    # keep it running (systemd / launchd), daily pass at 07:00
+node packages/cli/dist/cli.mjs ci install         # optional: the PR review check, see docs/ci-check.md
+```
+
+(`npx ultimatehuman init` once the package is published.)
+
+## Configure
+
+One file, `~/.ultimatehuman/config.json5` (see `config.example.json5`), editable by hand or in the dashboard's **Config** page:
+
+- **`repos`**: the local checkouts the agents read, `[{ name, path, testUrl?, notes? }]`. Each repo keeps its own git/GitHub auth; every finding carries a repo badge.
+- **`models`**: one model per leg type (radar, review, retrospective, and the future fix/exam/chat/intake/bundle legs). Default `claude-opus-5-5`; Config > Models has a dropdown per leg.
+- **`features`**: everything optional, every flag off by default, and off behaves exactly like a build without the feature. First real toggle: `validationGate` (new findings wait in *Awaiting validation* until you promote them).
+- **Setup grade**: Bronze to Platinum, computed from the config, with "what unlocks the next tier" in Config > Setup grade. Spec: [docs/setup-grade.md](docs/setup-grade.md).
 
 ## What you need
 
-- **Node 22+**
+- **Node 22+** (bootstrap installs it)
 - **A Claude Code login** on the machine. An API key works too, for extra capacity.
-- **At least one source:** Sentry or PostHog. Datadog is coming next.
-- **A GitHub fine-grained token** for one repo: Issues read/write, Contents read-only.
+- **Sources (optional, one is enough):** PostHog, Datadog (error logs + error events, read-only Application key: `logs_read_data`, `logs_read_index_data`, `events_read`; site `datadoghq.com` or `datadoghq.eu`), Sentry (plugin probe still a stub in this build).
+- **Optional:** a GitHub token for issue previews. The pipeline keeps its own tickets without it.
 
 ## Plays nice with your own Claude usage
 
@@ -48,7 +69,7 @@ Paste this into Claude Code: *"Install ultimatehuman following docs/agent-instal
 
 ## Status
 
-Pre-alpha. The design lives in [SPEC.md](SPEC.md) and the build plan in [ROADMAP.md](ROADMAP.md). The packages are typed stubs: they compile, but they do not do anything yet.
+Pre-alpha. The design lives in [SPEC.md](SPEC.md) and the build plan in [ROADMAP.md](ROADMAP.md).
 
 ## License
 

@@ -1,4 +1,4 @@
-export { ConfigSchema, configJsonSchema, type Config } from "./config/schema";
+export { ConfigSchema, configJsonSchema, migrateConfig, MODEL_CHOICES, MODEL_STAGES, DEFAULT_MODEL, type Config, type RepoConfig, type ModelStage, type PendingItem } from "./config/schema";
 export { loadConfig, writeConfig, resolveSecretRefs, defaultConfigPath, describeRef, MissingEnvVarError } from "./config/load";
 export { getPath, setPath } from "./config/paths";
 export { uhHome, ensureHome, controlKey, homeId } from "./home";
@@ -11,3 +11,8 @@ export { Store } from "./store/store";
 export { Radar } from "./radar/engine";
 export { renderIssue } from "./radar/issue";
 export { startDaemon, type DaemonHandle } from "./daemon";
+export { gradeSetup, gradeProbes, CI_WORKFLOW_PATH, TIERS, type SetupGrade, type Tier } from "./setup/grade";
+export { extractSends } from "./chat/files";
+export { scanRepo, detectFramework, type Detection, type TrackerId, type Framework } from "./setup/scan";
+export { isResolved, resolvedItems, setupStatusText } from "./setup/pending";
+export { engineEnvPath, readEnvFile, writeEnvFile, setEngineEnv, loadEngineEnv } from "./envfile";

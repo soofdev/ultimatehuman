@@ -253,20 +253,241 @@ function ConfigFile() {
   );
 }
 
+// One model per leg type, written to the config file's `models` block.
+function ModelsPanel() {
+  const [m, setM] = useState(null);
+  const [saving, setSaving] = useState(null);
+  const [flash, setFlash] = useState(null);
+  const [error, setError] = useState(null);
+  const load = useCallback(async () => setM(await engineCall('/api/models')), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  if (!m) return null;
+  const change = async (stage, model) => {
+    setSaving(stage);
+    setError(null);
+    setFlash(null);
+    try {
+      await engineCall('/api/config/models', { [stage]: model });
+      setFlash(`${m.stages.find((st) => st.id === stage).label} now uses ${model}. The next leg reads it.`);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(null);
+    }
+  };
+  return (
+    <article data-models className={CARD}>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-base font-semibold text-gray-900">Models</h2>
+        <span className={`${PILL} ml-auto bg-gray-50 text-gray-600 ring-gray-200`}>default {m.default}</span>
+      </div>
+      <p className="mt-1 text-sm text-gray-600">Which Claude model each leg runs on. Opus 5.5 is advised everywhere; a lighter model trades depth for speed and usage.</p>
+      {m.envOverride && (
+        <p role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          ULTIMATEHUMAN_MODEL={m.envOverride} is set in the engine's environment and overrides every choice below.
+        </p>
+      )}
+      {flash && (
+        <div role="status" data-flash className="mt-3 flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900">
+          <CheckCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+          <p>{flash}</p>
+        </div>
+      )}
+      {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-900">{error}</p>}
+      <ul className="mt-4 divide-y divide-gray-100">
+        {m.stages.map((st) => {
+          const cur = m.models[st.id];
+          const known = m.choices.some((c) => c.id === cur);
+          return (
+            <li key={st.id} data-model-stage={st.id} className="flex flex-wrap items-center gap-3 py-3">
+              <label htmlFor={`model-${st.id}`} className="min-w-[220px] flex-1 text-sm font-medium text-gray-900">
+                {st.label}
+                {!st.used && <span className="ml-2 text-xs font-normal text-gray-400">not run by this build yet</span>}
+              </label>
+              <select
+                id={`model-${st.id}`}
+                value={cur}
+                disabled={saving === st.id}
+                onChange={(e) => void change(st.id, e.target.value)}
+                className="min-h-[40px] w-64 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              >
+                {m.choices.map((c) => (
+                  <option key={c.id} value={c.id}>{c.label}{c.note ? ` (${c.note})` : ''}</option>
+                ))}
+                {!known && <option value={cur}>{cur} (from the file)</option>}
+              </select>
+            </li>
+          );
+        })}
+      </ul>
+    </article>
+  );
+}
+
+// Optional behaviour: every flag defaults off, and off = behaviour identical.
+const FEATURE_LABEL = { validationGate: 'Validation gate', fixLoop: 'Fix loop', ledger: 'Ledger' };
+function FeaturesPanel() {
+  const [f, setF] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const load = useCallback(async () => setF(await engineCall('/api/features')), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  if (!f) return null;
+  const toggle = async (id, on) => {
+    setBusy(id);
+    setError(null);
+    try {
+      await engineCall('/api/config/features', { [id]: on });
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <article data-features className={CARD}>
+      <h2 className="text-base font-semibold text-gray-900">Features</h2>
+      <p className="mt-1 text-sm text-gray-600">Everything is optional. Each flag starts off, and off behaves exactly like a build without the feature.</p>
+      {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-900">{error}</p>}
+      <ul className="mt-4 divide-y divide-gray-100">
+        {f.features.map((x) => (
+          <li key={x.id} data-feature={x.id} data-on={x.on ? '1' : '0'} className="flex items-start gap-4 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-gray-900">
+                {FEATURE_LABEL[x.id] || x.id}
+                {x.reserved && <span className="ml-2 text-xs font-normal text-gray-400">reserved</span>}
+              </p>
+              <p className="mt-0.5 text-sm text-gray-600">{x.description}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={x.on}
+              aria-label={FEATURE_LABEL[x.id] || x.id}
+              disabled={busy === x.id}
+              onClick={() => void toggle(x.id, !x.on)}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${x.on ? 'bg-emerald-600' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${x.on ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
+}
+
+// Setup grade (docs/setup-grade.md): computed by the engine from the config + cheap probes.
+const TIER = {
+  bronze: { label: 'Bronze', cls: 'bg-amber-50 text-amber-900 ring-amber-300', dot: 'bg-amber-700' },
+  silver: { label: 'Silver', cls: 'bg-slate-100 text-slate-800 ring-slate-300', dot: 'bg-slate-400' },
+  gold: { label: 'Gold', cls: 'bg-yellow-50 text-yellow-900 ring-yellow-400', dot: 'bg-yellow-500' },
+  platinum: { label: 'Platinum', cls: 'bg-indigo-50 text-indigo-900 ring-indigo-300', dot: 'bg-indigo-500' },
+};
+const tierName = (t) => (t ? TIER[t].label : 'Not set up');
+
+export function GradeBadge({ grade, onClick }) {
+  if (!grade) return null;
+  const t = grade.tier ? TIER[grade.tier] : { cls: 'bg-gray-50 text-gray-600 ring-gray-200', dot: 'bg-gray-300' };
+  return (
+    <button type="button" data-grade-badge={grade.tier || 'none'} onClick={onClick} className={`${PILL} ${t.cls}`} title="Setup grade: what is configured, and what unlocks the next tier">
+      <span className={`h-2 w-2 rounded-full ${t.dot}`} aria-hidden />
+      Setup grade: {tierName(grade.tier)}
+    </button>
+  );
+}
+
+function GradePanel({ grade }) {
+  if (!grade) return null;
+  return (
+    <div className="space-y-4">
+      <article data-grade className={CARD}>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-base font-semibold text-gray-900">Setup grade</h2>
+          <span className="ml-auto"><GradeBadge grade={grade} /></span>
+        </div>
+        <p className="mt-1 text-sm text-gray-600">
+          Everything is optional; the grade says how much of the pipeline this install uses. Each tier needs all of its checks and those of the tiers below.
+        </p>
+        {grade.next && (
+          <div data-unlocks className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <p className="text-sm font-semibold text-gray-900">What unlocks {tierName(grade.next)}</p>
+            <ul className="mt-2 space-y-1.5">
+              {grade.unlocks.map((c) => (
+                <li key={c.id} className="text-sm text-gray-700">
+                  <span className="font-medium text-gray-900">{c.label}.</span> {c.hint}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </article>
+      {grade.pending?.length > 0 && (
+        <article data-pending-ledger className={CARD}>
+          <h2 className="text-base font-semibold text-gray-900">Pending ({grade.pending.length})</h2>
+          <p className="mt-1 text-sm text-gray-600">Skipped at install. The engine clears each one when it is done and says so in the Chat.</p>
+          <ul className="mt-3 divide-y divide-gray-100">
+            {grade.pending.map((p) => (
+              <li key={p.id} data-pending={p.id} className="py-2.5">
+                <p className="text-sm font-medium text-gray-900">
+                  {p.label} {p.tier && <span className={`${PILL} ${TIER[p.tier].cls}`}>{TIER[p.tier].label}</span>}
+                </p>
+                <p className="text-xs text-gray-600">{p.why}</p>
+                <p className="text-xs text-gray-500">→ {p.unlock}</p>
+              </li>
+            ))}
+          </ul>
+        </article>
+      )}
+      <article className={CARD}>
+        <ul className="divide-y divide-gray-100">
+          {grade.checks.map((c) => (
+            <li key={c.id} data-grade-check={c.id} data-ok={c.ok ? '1' : '0'} className="flex items-start gap-3 py-2.5">
+              <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${c.ok ? 'bg-emerald-500' : 'bg-gray-300'}`} aria-hidden />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-gray-900">{c.label}</p>
+                {!c.ok && <p className="text-xs text-gray-500">{c.hint}</p>}
+              </div>
+              <span className={`${PILL} ${TIER[c.tier].cls}`}>{TIER[c.tier].label}</span>
+            </li>
+          ))}
+        </ul>
+      </article>
+    </div>
+  );
+}
+
 const TABS = [
   { key: 'instructions', label: 'Instructions' },
+  { key: 'models', label: 'Models' },
+  { key: 'features', label: 'Features' },
+  { key: 'grade', label: 'Setup grade' },
   { key: 'file', label: 'Config file' },
 ];
 
 export default function InstructionsPage() {
-  const [tab, setTab] = useState(() => (new URLSearchParams(location.search).get('tab') === 'file' ? 'file' : 'instructions'));
+  const [tab, setTab] = useState(() => {
+    const t = new URLSearchParams(location.search).get('tab');
+    return TABS.some((x) => x.key === t) ? t : 'instructions';
+  });
   const [data, setData] = useState(null);
   const [sel, setSel] = useState(() => new URLSearchParams(location.search).get('brief') || 'admission');
   const [flash, setFlash] = useState(null);
   const load = useCallback(async () => setData(await engineCall('/api/instructions')), []);
+  const [grade, setGrade] = useState(null);
   useEffect(() => {
     void load();
   }, [load]);
+  // re-graded on every tab switch: a Models/Features change can move the tier
+  useEffect(() => {
+    void engineCall('/api/setup-grade').then(setGrade).catch(() => {});
+  }, [tab]);
   const go = (t) => {
     setTab(t);
     const u = new URL(location.href);
@@ -292,6 +513,7 @@ export default function InstructionsPage() {
         <header>
           <div className="flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-gray-900">Config</h1>
+            <span className="ml-auto"><GradeBadge grade={grade} onClick={() => go('grade')} /></span>
             {data && (
               <span data-in-force className={`${PILL} bg-white text-gray-700 ring-gray-200`}>
                 <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
@@ -333,6 +555,9 @@ export default function InstructionsPage() {
 
         <div className="mt-5">
           {tab === 'file' && <ConfigFile />}
+          {tab === 'models' && <ModelsPanel />}
+          {tab === 'features' && <FeaturesPanel />}
+          {tab === 'grade' && <GradePanel grade={grade} />}
           {tab === 'instructions' && data && (
             <div className="space-y-4">
               {flash && (

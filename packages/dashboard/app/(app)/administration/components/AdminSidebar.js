@@ -484,6 +484,16 @@ const navigation = [
             </svg>
         )
     },
+    // Setup chat (2026-10-30): the dashboard's Chat page (src/pages/Chat.tsx), same conversation as the CLI and Telegram.
+    {
+        name: 'Chat',
+        href: '/chat',
+        icon: (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+        )
+    },
     // {
     //     name: 'Settings',
     //     href: '/administration/settings',
@@ -497,7 +507,7 @@ const navigation = [
 ];
 
 // Vincent order (2026-10-27): the sidebar shows exactly these two pages; + Config (Teach your radar brief, 2026-10-28).
-const RADAR_PAGES = ['/administration/claims', '/administration/pipeline-live', '/administration/config'];
+const RADAR_PAGES = ['/administration/claims', '/administration/pipeline-live', '/administration/config', '/chat'];
 
 export default function AdminSidebar() {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);

@@ -10,4 +10,10 @@ export interface GlobalFlags {
   notifyPrefix?: string;
   /** A self-hosted server for the notifier (Telegram: your own Bot API server). */
   notifyServer?: string;
+  /** Repo checkouts to watch, comma-separated paths (skips the question). */
+  repos?: string;
+  /** Deployed test/staging URL (skips the question). */
+  testUrl?: string;
+  /** Engine port (default 4747, or the next free one). */
+  port?: number;
 }

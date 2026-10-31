@@ -62,7 +62,7 @@ let rl: import("node:readline").Interface | null = null;
 const lines: string[] = [];
 let waiting: ((l: string | null) => void) | null = null;
 let closed = false;
-export async function ask(question: string, def?: string): Promise<string> {
+export async function ask(question: string, def?: string, secret = false): Promise<string> {
   if (!rl) {
     const { createInterface } = await import("node:readline");
     rl = createInterface({ input: process.stdin, terminal: false });
@@ -75,7 +75,8 @@ export async function ask(question: string, def?: string): Promise<string> {
   }
   process.stdout.write(`  ${c.accent("?")} ${c.bold(question)}${def ? c.muted(` (${def})`) : ""} `);
   const a = lines.length ? lines.shift()! : closed ? null : await new Promise<string | null>((r) => (waiting = r));
-  if (!process.stdin.isTTY || a === null) process.stdout.write(`${a ?? ""}\n`);
+  // Piped answers are echoed so a transcript reads like a session; a piped secret is shown masked.
+  if (!process.stdin.isTTY || a === null) process.stdout.write(`${secret && a ? mask(a) : a ?? ""}\n`);
   return a?.trim() || def || "";
 }
 
@@ -90,4 +91,13 @@ export async function choose(question: string, options: string[], def = 0): Prom
   const a = await ask(`Choose 1-${options.length}`, String(def + 1));
   const n = Number(a) - 1;
   return n >= 0 && n < options.length ? n : def;
+}
+
+const mask = (a: string) => `${"•".repeat(Math.min(12, Math.max(4, a.length - 4)))}${a.slice(-4)}`;
+
+/** Like ask, for a secret: on a terminal the typed line is redrawn masked once Enter is hit. */
+export async function askSecret(question: string): Promise<string> {
+  const a = await ask(question, undefined, true);
+  if (a && process.stdin.isTTY && process.stdout.isTTY) process.stdout.write(`\x1b[1A\r\x1b[2K  ${c.accent("?")} ${c.bold(question)} ${c.muted(mask(a))}\n`);
+  return a;
 }
