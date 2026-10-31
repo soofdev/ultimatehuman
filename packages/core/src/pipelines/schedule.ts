@@ -60,6 +60,8 @@ export function describeSchedule(src: string): string {
   if (p.kind === "manual") return "manual only";
   const daily = /^(\d+)\s+(\d+)\s+\*\s+\*\s+\*$/.exec(src.trim());
   if (daily) return `daily at ${daily[2]!.padStart(2, "0")}:${daily[1]!.padStart(2, "0")}`;
+  const weekdays = /^(\d+)\s+(\d+)\s+\*\s+\*\s+1-5$/.exec(src.trim());
+  if (weekdays) return `weekdays at ${weekdays[2]!.padStart(2, "0")}:${weekdays[1]!.padStart(2, "0")}`;
   const every = /^0\s+\*\/(\d+)\s+\*\s+\*\s+\*$/.exec(src.trim()) ?? /^every\s+(\d+)/i.exec(src.trim());
   if (every) return every[1] === "1" ? "every hour" : `every ${every[1]} hours`;
   return `cron ${src.trim()}`;

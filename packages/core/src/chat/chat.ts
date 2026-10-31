@@ -71,9 +71,10 @@ export function mergePatch(target: Record<string, any>, patch: Record<string, an
           if (i >= 0) list.splice(i, 1);
         } else if (!isObj(sub)) throw new Error(`${k}.${id}: send an object of fields, or null to remove it`);
         else if (i >= 0) mergePatch(list[i]!, sub);
-        else list.push({ id, ...sub });
+        else list.push(mergePatch({ id }, sub));
       }
     } else if (typeof v === "object" && !Array.isArray(v) && typeof target[k] === "object" && target[k] && !Array.isArray(target[k])) mergePatch(target[k], v);
+    else if (isObj(v)) target[k] = mergePatch({}, v); // a new object: its nulls mean "absent", never a null value
     else target[k] = v;
   }
   return target;
