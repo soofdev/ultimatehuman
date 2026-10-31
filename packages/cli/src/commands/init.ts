@@ -3,7 +3,7 @@ import { openSync, existsSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { ensureHome, controlKey, homeId, writeConfig, defaultConfigPath, runClaude, claudeBin, readOnlyHttp, outboundHttp, notifyHosts, scanRepo, detectFramework, gradeSetup, gradeProbes, setEngineEnv, readEnvFile, writeEnvFile, engineEnvPath, type RateLimitReading, type PendingItem } from "@ultimatehuman/core";
+import { ensureHome, controlKey, homeId, writeConfig, TEMPLATES, instantiate, describeSchedule, defaultConfigPath, runClaude, claudeBin, readOnlyHttp, outboundHttp, notifyHosts, scanRepo, detectFramework, gradeSetup, gradeProbes, setEngineEnv, readEnvFile, writeEnvFile, engineEnvPath, type RateLimitReading, type PendingItem } from "@ultimatehuman/core";
 import type { NotifyPlugin, Plugin, ProbeResult } from "@ultimatehuman/sdk";
 import { bundledPlugins } from "../plugins";
 import type { GlobalFlags } from "../flags";
@@ -172,6 +172,20 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     line.err("Code", "no git checkout to watch. Run init inside your project, or pass --repos <path>.");
     if (flags.nonInteractive) return 2;
     add({ id: "code.repo", label: "Code", status: "missing", summary: "No repo connected: root causes stay at the level the tracker data supports." });
+  }
+
+  // Pipelines: the templates are suggestions, one [Y/n] each, copied into the config (the user owns them after that).
+  const picked = flags.pipelines !== undefined ? new Set(flags.pipelines.split(",").map((x) => x.trim()).filter(Boolean)) : null;
+  const pipelines = [];
+  for (const t of TEMPLATES) {
+    let on = picked ? picked.has(t.id) : t.suggestedByDefault;
+    if (!picked && !flags.nonInteractive) {
+      const a = (await ask(`Pipeline "${t.name}": ${t.description} (${describeSchedule(t.pipeline.schedule)}) ${t.suggestedByDefault ? "[Y/n]" : "[y/N]"}`, t.suggestedByDefault ? "Y" : "N")).trim().toLowerCase();
+      on = a === "" ? t.suggestedByDefault : a.startsWith("y");
+    }
+    if (on) pipelines.push(instantiate(t));
+    if (on) line.ok("Pipeline", `${t.name} ${c.muted(`· ${describeSchedule(t.pipeline.schedule)} · yours to edit, disable or delete in Config > Pipelines`)}`);
+    else line.skip("Pipeline", `${t.name} not added ${c.muted("· add it any time from Config > Pipelines or the chat")}`);
   }
 
   // Trackers: the shell's env vars are the fast path; otherwise look at what the code uses and ask for a key.
@@ -537,7 +551,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     ...(port !== 4747 ? { server: { port } } : {}),
     auth: { sources: [authKind === "claude_oauth_token" ? { id: "sub", kind: "claude_oauth_token", token: "${CLAUDE_CODE_OAUTH_TOKEN}" } : { id: "sub", kind: "claude_login" }] },
     governor: { humanReservePct: 30 },
-    radar: { schedule: "0 7 * * *", lookbackHours: 24, firstPassLookbackHours: 168, minUsersAffected: 2, maxFindingsPerRun: 3, autoFile: false },
+    pipelines,
     ...(repos.length ? { repos } : {}),
     plugins: pluginConfig,
     ...(Object.keys(notifications).length ? { notifications } : {}),
@@ -550,7 +564,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
   mark("config");
 
   // ── 4. engine + first pass ───────────────────────────────────────────────
-  section("Starting the engine and the first radar pass", TOTAL);
+  section("Starting the engine and the first passes", TOTAL);
   const alive = state === "mine";
   let pid: number | undefined;
   if (!alive) {
@@ -569,12 +583,24 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
   }
   line.ok("Engine", `running on ${c.bold(`127.0.0.1:${port}`)}${pid ? c.muted(` · pid ${pid}`) : ""} ${c.muted("· loopback only")}`);
   await api("/api/onboarding", { checks, initStartedAt: new Date(t0).toISOString(), timings, window: rl ?? null, probes: probeResults });
-  if (Object.keys(pluginConfig).some((id) => sourcePlugins.some((p) => p.manifest.id === id))) {
-    const { run } = await api("/api/runs", { trigger: "onboarding" });
-    line.ok("Radar", `first pass started · looking back ${run.lookbackHours / 24} days · ${c.muted(run.id)}`);
+  // A pipeline that reads trackers waits for one; a repo audit can start at once. Passes are serialized by the engine.
+  const hasTracker = Object.keys(pluginConfig).some((id) => sourcePlugins.some((p) => p.manifest.id === id));
+  let firstRunId: string | undefined;
+  for (const p of pipelines) {
+    const needsTracker = !(p.sources ?? ["*"]).every((s) => s === "repos");
+    if (needsTracker && !hasTracker) {
+      line.skip(p.name, "no tracker connected: its first pass starts when one is (the engine checks every minute)");
+      continue;
+    }
+    const out = await api("/api/runs", { trigger: "onboarding", pipelineId: p.id });
+    if (out.run) line.ok(p.name, `first pass started · looking back ${out.run.lookbackHours / 24} days · ${c.muted(out.run.id)}`);
+    else line.ok(p.name, `first pass queued ${c.muted(`(position ${out.position}: one pass runs at a time)`)}`);
+    firstRunId ??= out.run?.id;
+  }
+  if (firstRunId) {
     mark("run_started");
-    await api("/api/onboarding", { checks, initStartedAt: new Date(t0).toISOString(), timings, window: rl ?? null, probes: probeResults, runId: run.id });
-  } else line.skip("Radar", "no tracker connected: the first pass starts when one is (the engine checks every minute)");
+    await api("/api/onboarding", { checks, initStartedAt: new Date(t0).toISOString(), timings, window: rl ?? null, probes: probeResults, runId: firstRunId });
+  }
   const { url } = await api("/api/auth/link", {});
 
   // ── end screen: grade, what unlocks the next tier, and the pending ledger ──

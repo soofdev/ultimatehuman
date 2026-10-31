@@ -27,7 +27,7 @@ const USAGE = `ultimatehuman <command>
   key         <ENV_NAME> saves one secret into the engine env file (prompted, never echoed);
               a pending tracker key is picked up by the running engine within a minute
 
-Every interactive step has a flag (init: --repos <path,path>, --test-url <url>,
+Every interactive step has a flag (init: --repos <path,path>, --pipelines <template,template>, --test-url <url>,
 --project <posthog id>, --repo owner/name, --notify-prefix <text>, --notify-server <url>,
 --port <n>);
 pass --non-interactive to take the detected defaults instead of prompting.`;
@@ -48,6 +48,7 @@ async function main(argv: string[]): Promise<number> {
       "notify-prefix": { type: "string" },
       "notify-server": { type: "string" },
       repos: { type: "string" },
+      pipelines: { type: "string" },
       "test-url": { type: "string" },
       port: { type: "string" },
       base: { type: "string" },
@@ -65,6 +66,7 @@ async function main(argv: string[]): Promise<number> {
     ...(typeof values["notify-prefix"] === "string" ? { notifyPrefix: values["notify-prefix"] } : {}),
     ...(typeof values["notify-server"] === "string" ? { notifyServer: values["notify-server"] } : {}),
     ...(typeof values.repos === "string" ? { repos: values.repos } : {}),
+    ...(typeof values.pipelines === "string" ? { pipelines: values.pipelines } : {}),
     ...(typeof values["test-url"] === "string" ? { testUrl: values["test-url"] } : {}),
     ...(typeof values.port === "string" && Number(values.port) > 0 ? { port: Number(values.port) } : {}),
   };
