@@ -1,10 +1,11 @@
-// Config > Instructions ("Teach your radar", SPEC 7b). The radar's own page,
+// Config > Pipelines + Instructions ("Teach your pipelines", SPEC 7b). The engine's own page,
 // mounted inside the vendored admin layout. It is not a vendored file: it
 // reuses the vendored pages' Tailwind vocabulary (page frame, underline tabs,
 // card, pill, dark primary button) so it reads as the same product.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowUturnLeftIcon, CheckCircleIcon, ChevronRightIcon, LockClosedIcon } from '@heroicons/react/20/solid';
 import { engineCall } from '../verbatim/data-provider';
+import PipelinesPanel from '../pipelines/PipelinesPanel';
 
 const PILL = 'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset';
 const CARD = 'rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6';
@@ -41,7 +42,7 @@ export function Diff({ lines, file }) {
   );
 }
 
-function Editor({ brief, version, onSaved }) {
+function Editor({ brief, version, pipelineId, onSaved }) {
   const [text, setText] = useState(brief.text);
   const [note, setNote] = useState('');
   const [review, setReview] = useState(null);
@@ -57,16 +58,16 @@ function Editor({ brief, version, onSaved }) {
 
   const check = useCallback(async () => {
     setError(null);
-    const r = await engineCall('/api/instructions/diff', { brief: brief.id, text });
+    const r = await engineCall('/api/instructions/diff', { pipelineId, brief: brief.id, text });
     setReview(r);
     if (r.error) setError(r.error);
-  }, [brief.id, text]);
+  }, [brief.id, text, pipelineId]);
 
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      const r = await engineCall('/api/instructions', { brief: brief.id, text, note });
+      const r = await engineCall('/api/instructions', { pipelineId, brief: brief.id, text, note });
       onSaved(`Saved as v${r.version}. The next pass reads it.`);
     } catch (e) {
       setError(e.message);
@@ -79,7 +80,7 @@ function Editor({ brief, version, onSaved }) {
     <article data-editor={brief.id} className={CARD}>
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-base font-semibold text-gray-900">{brief.title}</h2>
-        <span className="font-mono text-xs text-gray-500">instructions/{brief.file}</span>
+        <span className="font-mono text-xs text-gray-500">instructions/{pipelineId}/{brief.file}</span>
         <span className="ml-auto text-xs tabular-nums text-gray-500">about {brief.tokens} tokens</span>
       </div>
       <p className="mt-1 text-sm text-gray-600">{brief.feeds}</p>
@@ -139,7 +140,7 @@ function Editor({ brief, version, onSaved }) {
   );
 }
 
-function History({ versions, current, onReverted }) {
+function History({ versions, current, pipelineId, onReverted }) {
   const [open, setOpen] = useState(() => new Set([current]));
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
@@ -147,7 +148,7 @@ function History({ versions, current, onReverted }) {
     setBusy(to);
     setError(null);
     try {
-      const r = await engineCall('/api/instructions/revert', { version: to, note });
+      const r = await engineCall('/api/instructions/revert', { pipelineId, version: to, note });
       onReverted(`Reverted: v${r.version} restores v${to}. The next pass reads it.`);
     } catch (e) {
       setError(e.message);
@@ -158,7 +159,7 @@ function History({ versions, current, onReverted }) {
   return (
     <section data-history aria-label="Version history" className={CARD}>
       <h2 className="text-base font-semibold text-gray-900">History</h2>
-      <p className="mt-1 text-sm text-gray-600">Every save is a version of all four briefs. A pass names the version it ran with. Reverting adds a version; nothing is rewritten.</p>
+      <p className="mt-1 text-sm text-gray-600">Every save is a version of this pipeline's five briefs. A pass names the version it ran with. Reverting adds a version; nothing is rewritten.</p>
       {error && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}
       <ol className="mt-4 divide-y divide-gray-100">
         {versions.map((v, i) => {
@@ -464,6 +465,7 @@ function GradePanel({ grade }) {
 }
 
 const TABS = [
+  { key: 'pipelines', label: 'Pipelines' },
   { key: 'instructions', label: 'Instructions' },
   { key: 'models', label: 'Models' },
   { key: 'features', label: 'Features' },
@@ -474,12 +476,16 @@ const TABS = [
 export default function InstructionsPage() {
   const [tab, setTab] = useState(() => {
     const t = new URLSearchParams(location.search).get('tab');
-    return TABS.some((x) => x.key === t) ? t : 'instructions';
+    return TABS.some((x) => x.key === t) ? t : 'pipelines';
   });
   const [data, setData] = useState(null);
   const [sel, setSel] = useState(() => new URLSearchParams(location.search).get('brief') || 'admission');
+  const [pipe, setPipe] = useState(() => new URLSearchParams(location.search).get('pipeline') || '');
   const [flash, setFlash] = useState(null);
-  const load = useCallback(async () => setData(await engineCall('/api/instructions')), []);
+  const load = useCallback(async () => {
+    const d = await engineCall(`/api/instructions${pipe ? `?pipeline=${encodeURIComponent(pipe)}` : ''}`).catch(() => engineCall('/api/instructions'));
+    setData(d);
+  }, [pipe]);
   const [grade, setGrade] = useState(null);
   useEffect(() => {
     void load();
@@ -493,6 +499,17 @@ export default function InstructionsPage() {
     const u = new URL(location.href);
     u.searchParams.set('tab', t);
     history.replaceState(null, '', u);
+  };
+  const pickPipeline = (id) => {
+    setPipe(id);
+    setFlash(null);
+    const u = new URL(location.href);
+    u.searchParams.set('pipeline', id);
+    history.replaceState(null, '', u);
+  };
+  const openInstructions = (id) => {
+    pickPipeline(id);
+    go('instructions');
   };
   const pick = (id) => {
     setSel(id);
@@ -514,16 +531,16 @@ export default function InstructionsPage() {
           <div className="flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-gray-900">Config</h1>
             <span className="ml-auto"><GradeBadge grade={grade} onClick={() => go('grade')} /></span>
-            {data && (
+            {data && tab === 'instructions' && (
               <span data-in-force className={`${PILL} bg-white text-gray-700 ring-gray-200`}>
                 <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
-                Instructions v{data.version} in force
+                {data.pipeline.name}: v{data.version} in force
               </span>
             )}
           </div>
           <p className="mt-1 text-sm text-gray-600">
-            Teach your radar: the judgment it applies on every pass lives in four short briefs you can edit. Each save is a version; the next pass reads it and names it in its run detail.
-            {lastPass && ` The last pass (${passName(lastPass)}, ${when(lastPass.startedAt)}) ran with v${lastPass.version}.`}
+            Every pipeline is yours: add one from a template or blank, edit, disable or delete it. Each one's judgment lives in five short briefs you can edit; each save is a version, and the next pass reads it and names it in its run detail.
+            {tab === 'instructions' && lastPass && ` The last ${data.pipeline.name} pass (${passName(lastPass)}, ${when(lastPass.startedAt)}) ran with v${lastPass.version}.`}
           </p>
         </header>
 
@@ -544,6 +561,9 @@ export default function InstructionsPage() {
                   }`}
                 >
                   {t.label}
+                  {t.key === 'pipelines' && data && (
+                    <span className={`rounded-full px-1.5 text-xs tabular-nums ${active ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-600'}`}>{data.pipelines.length}</span>
+                  )}
                   {t.key === 'instructions' && data && (
                     <span className={`rounded-full px-1.5 text-xs tabular-nums ${active ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-600'}`}>v{data.version}</span>
                   )}
@@ -554,6 +574,7 @@ export default function InstructionsPage() {
         </div>
 
         <div className="mt-5">
+          {tab === 'pipelines' && <PipelinesPanel onOpenInstructions={openInstructions} onChanged={load} />}
           {tab === 'file' && <ConfigFile />}
           {tab === 'models' && <ModelsPanel />}
           {tab === 'features' && <FeaturesPanel />}
@@ -566,12 +587,26 @@ export default function InstructionsPage() {
                   <p>{flash}</p>
                 </div>
               )}
+              <div role="tablist" aria-label="Pipeline" data-pipeline-switcher className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-gray-700">Pipeline:</span>
+                {data.pipelines.map((p) => {
+                  const active = p.id === data.pipeline.id;
+                  return (
+                    <button key={p.id} type="button" role="tab" aria-selected={active} data-pipeline-switch={p.id} onClick={() => pickPipeline(p.id)}
+                      className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-full px-3.5 text-sm font-medium ring-1 ring-inset transition-colors ${active ? 'bg-gray-900 text-white ring-gray-900' : 'bg-white text-gray-700 ring-gray-300 hover:bg-gray-50'}`}>
+                      {p.name}
+                      <span className={`rounded-full px-1.5 text-xs tabular-nums ${active ? 'bg-white/20' : 'bg-gray-100 text-gray-600'}`}>v{p.version}</span>
+                      {!p.enabled && <span className="text-xs opacity-70">off</span>}
+                    </button>
+                  );
+                })}
+              </div>
               {data.warning && (
                 <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">{data.warning}</p>
               )}
               <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <div className="space-y-4">
-                  <div role="tablist" aria-label="Briefs" className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-2 2xl:grid-cols-4">
+                  <div role="tablist" aria-label="Briefs" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3">
                     {data.briefs.map((b) => {
                       const active = b.id === brief.id;
                       return (
@@ -590,10 +625,10 @@ export default function InstructionsPage() {
                       );
                     })}
                   </div>
-                  <Editor brief={brief} version={data.version} onSaved={done} />
+                  <Editor brief={brief} version={data.version} pipelineId={data.pipeline.id} onSaved={done} />
                   <Rails rails={data.rails} />
                 </div>
-                <History key={data.version} versions={data.versions} current={data.version} onReverted={done} />
+                <History key={`${data.pipeline.id}:${data.version}`} versions={data.versions} current={data.version} pipelineId={data.pipeline.id} onReverted={done} />
               </div>
             </div>
           )}

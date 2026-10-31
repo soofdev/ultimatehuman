@@ -23,14 +23,33 @@ function passLabel(r: any): string {
 
 export function Runs({ s }: { s: AppState }) {
   const [runs, setRuns] = useState<any[]>([]);
+  const [queued, setQueued] = useState<any[]>([]);
   const [sel, setSel] = useState<string | null>(null);
+  const [pipelines, setPipelines] = useState<{ id: string; name: string }[]>([]);
+  // Which pipeline the list shows ("" = all) and which one "Run now" starts.
+  const [filter, setFilter] = useState<string>(() => new URLSearchParams(location.search).get("pipeline") ?? "");
+  const [target, setTarget] = useState<string>("");
+  const [flash, setFlash] = useState<string | null>(null);
   useEffect(() => {
-    void get("/api/runs").then((r) => {
-      setRuns(r.runs);
-      const fromPath = location.pathname.split("/")[2];
-      setSel((x) => x ?? (r.runs.some((y: any) => y.id === fromPath) ? fromPath : r.runs[0]?.id) ?? null);
+    void get("/api/pipelines").then((r) => {
+      setPipelines(r.config.map((p: any) => ({ id: p.id, name: p.name })));
+      setTarget((t) => t || filter || r.config[0]?.id || "");
     });
-  }, [s.run?.phase, s.run?.findings]);
+  }, []);
+  useEffect(() => {
+    void get(`/api/runs${filter ? `?pipeline=${encodeURIComponent(filter)}` : ""}`).then((r) => {
+      setRuns(r.runs);
+      setQueued(r.queued ?? []);
+      const fromPath = location.pathname.split("/")[2];
+      setSel((x) => (x && r.runs.some((y: any) => y.id === x) ? x : (r.runs.some((y: any) => y.id === fromPath) ? fromPath : r.runs[0]?.id) ?? null));
+    });
+  }, [s.run?.phase, s.run?.findings, filter, flash]);
+  const nameOf = (id: string) => pipelines.find((p) => p.id === id)?.name ?? id;
+  const runNow = async () => {
+    const r = await post("/api/runs", { trigger: "run_now", pipelineId: target });
+    setFlash(r.queued ? `${nameOf(target)}: queued (position ${r.position}); one pass runs at a time.` : `${nameOf(target)}: pass started.`);
+    s.refresh();
+  };
   const run = s.run && s.run.id === sel ? s.run : runs.find((r) => r.id === sel);
   const nonFloor = run?.dropped?.filter((d: any) => d.stage !== "floor" && d.stage !== "rank") ?? [];
   const floor = run?.dropped?.filter((d: any) => d.stage === "floor" || d.stage === "rank") ?? [];
@@ -40,17 +59,35 @@ export function Runs({ s }: { s: AppState }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <h1 className="h1">Runs</h1>
-          <p className="lede">Every pass, every phase, and every draft that was dropped with its reason. Nothing is silently discarded.</p>
+          <p className="lede">Every pass of every pipeline, every phase, and every draft that was dropped with its reason. Nothing is silently discarded. One pass runs at a time; the others queue.</p>
         </div>
-        <button className="btn" onClick={() => void post("/api/runs", { trigger: "run_now", lookbackHours: run?.lookbackHours }).then(() => s.refresh())} disabled={s.run && !["done", "failed"].includes(s.run.phase)}>
-          <Play size={14} /> Run {run ? (run.lookbackHours % 24 === 0 ? `a ${run.lookbackHours / 24}-day` : `a ${run.lookbackHours}-hour`) : "a"} pass
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select data-run-target aria-label="Pipeline to run" className="input" value={target} onChange={(e) => setTarget(e.target.value)} style={{ minWidth: 180 }}>
+            {pipelines.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <button className="btn" data-run-now onClick={() => void runNow()} disabled={!target}>
+            <Play size={14} /> Run now
+          </button>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "0 0 12px" }} data-run-filter>
+        {[{ id: "", name: "All pipelines" }, ...pipelines].map((p) => (
+          <button key={p.id || "all"} className={`chip${filter === p.id ? " on" : ""}`} aria-pressed={filter === p.id} data-filter-pipeline={p.id || "all"} onClick={() => setFilter(p.id)}>
+            {p.name}
+          </button>
+        ))}
+        {queued.length > 0 && <span className="sub" data-queued>Queued: {queued.map((q: any) => nameOf(q.pipelineId)).join(", ")}</span>}
+        {flash && <span className="sub" data-run-flash>{flash}</span>}
       </div>
       <div className="runs">
         <div className="card runlist">
           {runs.map((r) => (
             <button key={r.id} aria-current={r.id === sel} onClick={() => setSel(r.id)}>
-              <div className="rl-t">{passLabel(r)}</div>
+              <div className="rl-t">
+                <span className="pipetag" data-run-pipeline={r.pipelineId}>{r.pipelineName ?? nameOf(r.pipelineId)}</span> {passLabel(r)}
+              </div>
               <div className="rl-s">
                 {dayTime(r.startedAt)} · {r.phase === "done" ? plural(r.findings, "finding") : r.phase}
               </div>

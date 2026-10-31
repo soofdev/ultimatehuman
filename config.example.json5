@@ -8,7 +8,13 @@
     ],
   },
   governor: { humanReservePct: 30 },
-  radar: { schedule: "0 7 * * *", lookbackHours: 24 },
+  // Pipelines: each one is data you own (docs/pipelines.md). `template` copies a suggestion in;
+  // every field can be overridden, and a file without `pipelines` (an old `radar` block) migrates to one bug-radar.
+  pipelines: [
+    { id: "bug-radar", template: "bug-radar" },
+    // { id: "security-check", template: "security-check", schedule: "every 12 hours" },
+    // { id: "api-errors", name: "API errors only", sources: ["datadog"], signalTypes: ["error_group", "log_pattern"], schedule: "0 */4 * * *" },
+  ],
   // Local checkouts the agents read. Each keeps its own git/GitHub auth: no token here.
   repos: [
     { name: "web", path: "/home/me/code/web", testUrl: "https://staging.example.com" },

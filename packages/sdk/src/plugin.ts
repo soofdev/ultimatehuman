@@ -99,7 +99,8 @@ export interface TimeWindow {
 export interface Signal {
   id: string; // stable: `${pluginId}:${nativeId}`
   pluginId: string;
-  type: SignalType;
+  /** Open string: pipelines filter on it (`signalTypes`). The bundled plugins emit the SignalType suggestions. */
+  type: SignalType | (string & {});
   title: string;
   firstSeen: string;
   lastSeen: string;
@@ -115,6 +116,7 @@ export interface Signal {
   excerpt?: unknown;
 }
 
+/** Signal types the bundled plugins emit: suggestions, not a closed list. */
 export type SignalType =
   | "error_group"
   | "performance_regression"
@@ -122,10 +124,11 @@ export type SignalType =
   | "event_anomaly"
   | "rage_click"
   | "session_recording"
-  | "log_pattern";
+  | "log_pattern"
+  | "repo_audit";
 
 export interface SourceAdapter {
-  /** Collect signals for one radar window. Must be idempotent and read-only. */
+  /** Collect signals for one pass window. Must be idempotent and read-only. */
   collect(ctx: PluginContext, window: TimeWindow): AsyncIterable<Signal>;
   /** Fetch deeper detail for one signal during root-causing (stack trace, recording, events). */
   expand?(ctx: PluginContext, signalId: string): Promise<unknown>;

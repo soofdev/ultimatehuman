@@ -483,3 +483,10 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .unlocks li span { font-weight: 600; color: var(--ink); }
 .pending-h { display: flex; gap: 8px; align-items: baseline; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .pending-h .sub { color: var(--ink-3); font-size: 12.5px; }
+/* multi-pipeline: run filter chips and the pipeline tag on run rows */
+button.chip { cursor: pointer; }
+.chip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.pipetag { display: inline-block; font-size: 10.5px; font-weight: 650; color: var(--accent-ink); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; margin-right: 4px; vertical-align: 1px; }
+.input { height: 34px; border: 1px solid var(--line); border-radius: 8px; padding: 0 8px; background: #fff; font: inherit; font-size: 13px; color: var(--ink); }
+[data-run-now] { white-space: nowrap; }
+[data-run-filter] .sub { margin-left: 8px; }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Store, Proposal } from "../store/store";
-import type { ProposalDraft } from "../radar/prompts";
-import type { RunRecord } from "../radar/types";
+import type { ProposalDraft } from "../pass/prompts";
+import type { RunRecord } from "../pass/types";
 import { Instructions, InstructionError, BRIEFS, lineDiff, estimateTokens, validateBrief, type BriefId, type VersionRecord } from "./instructions";
 
 /**
@@ -123,14 +123,14 @@ export function proposalFate(p: Proposal, versions: VersionRecord[]): string | n
 }
 
 /** Turns an agent draft into a card, or says why the script refused it. `known` maps every citable id to a plain label. */
-export function buildProposal(d: ProposalDraft, base: VersionRecord, runId: string, known: Map<string, string>, facts?: Map<string, RunFacts>): { ok: true; proposal: Proposal } | { ok: false; reason: string } {
+export function buildProposal(d: ProposalDraft, base: VersionRecord, runId: string, known: Map<string, string>, facts?: Map<string, RunFacts>, pipelineId?: string): { ok: true; proposal: Proposal } | { ok: false; reason: string } {
   const brief = d.brief as BriefId;
-  // Evidence accuracy: what the draft claims about each ref must be what the radar recorded.
+  // Evidence accuracy: what the draft claims about each ref must be what the pipeline recorded.
   const lies = facts ? falseClaims(d, facts) : [];
   if (lies.length) return { ok: false, reason: `"${d.title}": its evidence does not check out: ${lies.join("; ")}` };
   const refsIn = (s: string) => [...s.matchAll(REF)].map((m) => m[1]!).filter((r) => known.has(r));
   const evidence = d.evidence.filter((e) => known.has(e.ref)).map((e) => ({ ...e, label: known.get(e.ref)! }));
-  if (!evidence.length) return { ok: false, reason: `"${d.title}": none of its evidence is a cluster or run the radar knows` };
+  if (!evidence.length) return { ok: false, reason: `"${d.title}": none of its evidence is a cluster or run the pipeline knows` };
   // Prompt-budget rail: an edit that does not name the miss that pays for it is cut.
   const edits = d.edits.filter((e) => refsIn(e.because).length > 0);
   if (!edits.length) return { ok: false, reason: `"${d.title}": no edit names the cluster or run that pays for it` };
@@ -143,6 +143,7 @@ export function buildProposal(d: ProposalDraft, base: VersionRecord, runId: stri
   const proposal: Proposal = {
     id: "p_" + createHash("sha1").update(runId + brief + applied.text).digest("hex").slice(0, 10),
     runId,
+    ...(pipelineId ? { pipelineId } : {}),
     brief,
     status: "pending",
     createdAt: new Date().toISOString(),
@@ -163,9 +164,10 @@ export function buildProposal(d: ProposalDraft, base: VersionRecord, runId: stri
 }
 
 /** Your ruling on a proposal. Apply re-plays the edits on the brief in force (it may have moved since the draft). */
-export function ruleProposal(store: Store, ins: Instructions, id: string, ruling: "apply" | "reject" | "park", reason: string | null): { proposal: Proposal; version?: VersionRecord } {
+export function ruleProposal(store: Store, insFor: (p: Proposal) => Instructions, id: string, ruling: "apply" | "reject" | "park", reason: string | null): { proposal: Proposal; version?: VersionRecord } {
   const p = store.getProposal(id);
   if (!p) throw new InstructionError(404, "no such proposal");
+  const ins = insFor(p);
   if (p.status === "applied" || p.status === "rejected" || p.status === "stale") throw new InstructionError(409, `this proposal is already ${p.status}`);
   const at = new Date().toISOString();
   if (ruling === "reject") {

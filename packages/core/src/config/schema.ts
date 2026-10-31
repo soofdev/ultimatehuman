@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { PipelineSchema } from "../pipelines/schema";
+import { migratePipelines } from "../pipelines/migrate";
 
 /**
  * ONE schema-validated config file (JSON5, default ~/.ultimatehuman/config.json5).
@@ -78,19 +80,21 @@ const PendingSchema = z.object({
 export type PendingItem = z.infer<typeof PendingSchema>;
 
 /**
- * Old shape -> new shape, applied to the raw object before validation:
- * radar.repo.path becomes repos[0] when no repos list exists yet. Idempotent.
+ * Old shape -> new shape, applied to the raw object before validation. Idempotent.
+ * 1. radar.repo.path becomes repos[0] when no repos list exists yet.
+ * 2. The single `radar` block becomes `pipelines: [bug-radar]` (pipelines/migrate.ts); entries
+ *    that name a template get its values copied in.
  */
 export function migrateConfig(raw: unknown): unknown {
   if (!raw || typeof raw !== "object") return raw;
-  const c = raw as Record<string, any>;
+  let c = raw as Record<string, any>;
   const legacy = c.radar?.repo?.path;
   if (typeof legacy === "string" && legacy && !(Array.isArray(c.repos) && c.repos.length)) {
     const name = legacy.replace(/\/+$/, "").split("/").pop()?.replace(/[^A-Za-z0-9._-]/g, "-") || "repo";
     const { repo: _drop, ...radar } = c.radar;
-    return { ...c, radar, repos: [{ name, path: legacy }] };
+    c = { ...c, radar, repos: [{ name, path: legacy }] };
   }
-  return raw;
+  return migratePipelines(c);
 }
 
 /** Models the Config page offers. Any other id is accepted from the file (the claude CLI decides). */
@@ -104,7 +108,7 @@ export const DEFAULT_MODEL = "claude-opus-5-5";
 
 /** One model per leg type. `used` = a leg this build runs today; the others are reserved for the fix loop. */
 export const MODEL_STAGES = [
-  { id: "radar", label: "Radar (root cause)", used: true },
+  { id: "radar", label: "Investigation (root cause)", used: true },
   { id: "review", label: "Adversarial review", used: true },
   { id: "retrospective", label: "Retrospective (teach proposals)", used: true },
   { id: "intake", label: "Intake", used: false },
@@ -194,24 +198,11 @@ export const ConfigSchema = z
           .describe("Re-read the shared window before a large step when the last reading is older than this"),
       })
       .prefault({}),
-    radar: z
-      .object({
-        schedule: z.string().default("0 7 * * *").describe("Cron expression, local time"),
-        lookbackHours: z.number().int().min(1).max(24 * 14).default(24),
-        firstPassLookbackHours: z.number().int().min(1).max(24 * 14).default(168)
-          .describe("The onboarding pass looks further back so a new install has enough data to judge on day one"),
-        minUsersAffected: z.number().int().min(1).default(2)
-          .describe("Precision floor: a finding must touch at least this many users. Seeds instructions/admission.md on first boot; from then on that brief (editable in the cockpit) is the floor in force"),
-        maxFindingsPerRun: z.number().int().min(1).max(20).default(5),
-        autoFile: z.boolean().default(false).describe("v1 default: a human clicks File to GitHub"),
-        retentionDays: z.number().int().min(1).default(30).describe("Run bundles older than this are pruned"),
-        repo: z
-          .object({
-            path: z.string().optional().describe("Deprecated: use the top-level repos list. Migrated on load."),
-          })
-          .prefault({}),
-      })
-      .prefault({}),
+    pipelines: z
+      .array(PipelineSchema)
+      .default([])
+      .refine((ps) => new Set(ps.map((p) => p.id)).size === ps.length, "pipeline ids must be unique")
+      .describe("The pipelines this install runs. Each is data: sources, signal types, its own briefs, schedule, overrides. Templates are suggestions copied in; edit, disable, delete or add freely."),
     features: FeaturesSchema.describe("Optional behaviour. Every flag defaults off; off = behaviour identical."),
     models: ModelsSchema.describe("Model per leg type. Defaults to claude-opus-5-5 everywhere."),
     repos: z.array(RepoSchema).default([])

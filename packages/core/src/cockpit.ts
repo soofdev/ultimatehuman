@@ -1,6 +1,7 @@
 import type { Finding } from "@ultimatehuman/sdk";
 import type { Store, Ruling } from "./store/store";
-import type { RunRecord, DroppedDraft, RuledEntry } from "./radar/types";
+import type { RunRecord, DroppedDraft, RuledEntry } from "./pass/types";
+import { pipelineOfFinding, pipelineOfRun } from "./pipelines/migrate";
 
 /**
  * The cockpit feed: everything the radar wants from the human, as cards.
@@ -19,6 +20,8 @@ export interface HistoryEntry {
 export interface CockpitCard {
   kind: "finding" | "draft";
   clusterId: string;
+  /** The pipeline that produced it ("external" for tickets enqueued from outside). */
+  pipelineId: string;
   title: string;
   /** The ruling in force; null = waiting for one. */
   ruling: Ruling | null;
@@ -31,6 +34,7 @@ export interface CockpitCard {
 
 export interface RunCard {
   id: string;
+  pipelineId: string;
   label: string;
   trigger: RunRecord["trigger"];
   phase: RunRecord["phase"];
@@ -132,7 +136,7 @@ export function buildCockpit(store: Store, active: RunRecord | null, opts: { dry
     if (f.refreshedBy) history.push({ at: f.refreshedBy.at, kind: "refreshed", by: "radar", label: "Impact refreshed by a later pass" });
     history.push(...rulingHistory(rs), ...passHistory(runs, cid));
     history.sort((a, b) => a.at.localeCompare(b.at));
-    cards.push({ kind: "finding", clusterId: cid, title: f.title, ...current(rs), history, finding: f });
+    cards.push({ kind: "finding", clusterId: cid, pipelineId: pipelineOfFinding(f), title: f.title, ...current(rs), history, finding: f });
   }
 
   // Dropped drafts: the latest drop per cluster, across recent runs.
@@ -156,6 +160,7 @@ export function buildCockpit(store: Store, active: RunRecord | null, opts: { dry
     cards.push({
       kind: "draft",
       clusterId: cid,
+      pipelineId: pipelineOfRun(run),
       title: d.title ?? d.clusterTitle,
       ...current(rs),
       history,
@@ -165,6 +170,7 @@ export function buildCockpit(store: Store, active: RunRecord | null, opts: { dry
 
   const runCards: RunCard[] = runs.slice(0, 8).map((r) => ({
     id: r.id,
+    pipelineId: pipelineOfRun(r),
     label: runLabel(r),
     trigger: r.trigger,
     phase: r.phase,

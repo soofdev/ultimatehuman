@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { basename, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir, userInfo } from "node:os";
-import { ensureHome, homeId, loadConfig, uhHome, readEnvFile, writeEnvFile, engineEnvPath } from "@ultimatehuman/core";
+import { ensureHome, homeId, loadConfig, uhHome, readEnvFile, writeEnvFile, engineEnvPath, describeSchedule } from "@ultimatehuman/core";
 
 /**
  * `service install | uninstall | status`: run the engine under the OS supervisor so it survives
@@ -186,7 +186,7 @@ async function install(): Promise<number> {
       console.log(`✓ service ${label()} installed and running on 127.0.0.1:${port}`);
       console.log(`  unit: ${unitPath()}`);
       console.log(`  secrets: ${envPath()} (0600) · log: ${logPath()}`);
-      console.log(`  schedule: radar pass at "${config.radar.schedule}" (local time), survives reboots`);
+      for (const p of config.pipelines.filter((x) => x.enabled)) console.log(`  schedule: ${p.name} ${describeSchedule(p.schedule)} (local time), survives reboots`);
       if (!darwin && !sh("loginctl", ["show-user", userInfo().username, "-p", "Linger"]).out.includes("yes")) console.log("  ! run `loginctl enable-linger` so it also starts at boot without a login");
       return 0;
     }

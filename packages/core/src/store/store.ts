@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Finding } from "@ultimatehuman/sdk";
-import type { RunRecord } from "../radar/types";
+import type { RunRecord } from "../pass/types";
 
 /**
  * SQLite store (node:sqlite). The schema is created and migrated by the engine
@@ -53,6 +53,8 @@ export interface ProposalRuling {
 export interface Proposal {
   id: string;
   runId: string;
+  /** Pipeline whose briefs it amends (absent on proposals from before pipelines). */
+  pipelineId?: string;
   brief: string;
   /** pending = waiting for your ruling; stale = the brief changed so the edit no longer applies. */
   status: "pending" | "applied" | "rejected" | "parked" | "stale";

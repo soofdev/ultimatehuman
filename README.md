@@ -12,6 +12,18 @@ Most AI dev tools write code nobody asked for and claim it works. ultimatehuman 
 - **Fixes prove themselves (planned).** When fixes arrive in v2, they come as pull requests that must reproduce the bug and then prove the fix in a real browser on your test environment, examined like a hostile reviewer would.
 - **Humans stay in charge.** A human merges, and a human deploys.
 
+## Pipelines: suggestions you own
+
+What runs is a list of **pipelines** (`docs/pipelines.md`). Each one is plain data: which sources
+feed it, which signal types it keeps, its schedule, its own versioned briefs (the judgment its
+agents apply), and per-pipeline model and gate overrides. One generic runtime runs any of them, one
+pass at a time. Two templates ship as suggestions: **bug-radar** (trackers and analytics in,
+root-caused user-facing bugs out) and **security-check** (a daily read-only audit of the watched
+repos: committed secrets, risky dependencies, auth patterns). Adding a template copies it into your
+config; from then on you edit, disable, delete or add pipelines in Config > Pipelines, through the
+setup chat, or by hand. Any tool can also enqueue a ticket with `POST /api/findings`
+(`docs/tickets-api.md`).
+
 ## Quick start
 
 From a fresh machine (macOS or Linux, no Node needed):

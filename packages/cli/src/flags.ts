@@ -12,6 +12,8 @@ export interface GlobalFlags {
   notifyServer?: string;
   /** Repo checkouts to watch, comma-separated paths (skips the question). */
   repos?: string;
+  /** Pipeline templates to instantiate, comma-separated ids (skips the question; "none" for none). */
+  pipelines?: string;
   /** Deployed test/staging URL (skips the question). */
   testUrl?: string;
   /** Engine port (default 4747, or the next free one). */

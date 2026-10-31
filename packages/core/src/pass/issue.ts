@@ -9,7 +9,7 @@ export function renderIssue(f: Finding, labels: readonly string[]): { title: str
   const users = f.impact.usersAffected !== undefined ? `${f.impact.usersAffected} users` : "unknown number of users";
   lines.push(`> Found by ultimatehuman from ${[...new Set(f.evidence.map((e) => e.sourcePluginId))].join(", ")} data. Confidence: **${f.confidence}**. Severity: **${f.severity}**.`, "");
   lines.push("## Impact", `- ${users}, ${f.impact.occurrences} occurrences, trend: ${f.impact.trend}`, `- First seen ${utc(f.impact.firstSeen)}, last seen ${utc(f.impact.lastSeen)}`, "");
-  lines.push("## What users experience", f.symptom, "");
+  lines.push("## What happens", f.symptom, "");
   lines.push("## Root cause", f.rootCause.statement, "");
   for (const r of f.rootCause.reasoning) lines.push(`- ${r.claim} (${r.evidenceIds.map((id) => `[${id}](${ev.get(id)?.url ?? "#"})`).join(", ")})`);
   if (f.rootCause.codePointers?.length) {
