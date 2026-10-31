@@ -25,8 +25,11 @@
 //   finding.validation pending/later (features.validationGate) -> queue 'backlog', gate pending/later (Awaiting validation)
 //   Validate / Later / Dismiss on it -> POST /api/findings/:id/validate
 //   merge, building, manual, bundles, flags, chat -> none: no fix legs in this radar.
+//   card.pipelineId / proposal.pipelineId -> a pipeline badge beside the ticket key (src/pipelines/pipeline-badges.jsx)
+//   ?pipeline=<id> on the page URL -> only that pipeline's tickets (the badge layer's filter bar sets it)
 
 import { enhanceTeachCards } from '../teach/proposal-cards';
+import { enhancePipelineBadges } from '../pipelines/pipeline-badges';
 import { cockpitHref, stageOf } from '@/app/lib/pipeline-live';
 
 let csrf = '';
@@ -155,19 +158,20 @@ function toTicket(card, key) {
 }
 
 // Agent proposals to amend the instructions (SPEC 7b): the same decision grammar as a finding.
-const BRIEF_FILE = { collector: 'collector.md', admission: 'admission.md', gate: 'gate.md', scope: 'scope.md' };
+const BRIEF_FILE = { mission: 'mission.md', collector: 'collector.md', admission: 'admission.md', gate: 'gate.md', scope: 'scope.md' };
+const pipelineName = (id) => feed?.pipelines?.find((p) => p.id === id)?.name || id;
 const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
 
 function proposalDecision(p) {
   const file = BRIEF_FILE[p.brief] || p.brief;
-  const next = (feed?.instructionsVersion || p.baseVersion) + 1;
+  const next = (feed?.instructionsVersions?.[p.pipelineId] || p.baseVersion) + 1;
   const last = p.rulings[p.rulings.length - 1];
   const removed = p.diff.filter((l) => l.op === '-').length;
   const added = p.diff.filter((l) => l.op === '+').length;
   return {
-    question: `Teach your radar: ${p.title}. Apply this change to ${file}?`,
+    question: `Teach ${pipelineName(p.pipelineId)}: ${p.title}. Apply this change to ${file}?`,
     options: [
-      { letter: 'A', label: 'Apply', text: `Saves it as instructions v${next}; the next pass reads it. Config > Instructions reverts it in one tap.` },
+      { letter: 'A', label: 'Apply', text: `Saves it as ${pipelineName(p.pipelineId)} instructions v${next}; its next pass reads it. Config > Instructions reverts it in one tap.` },
       { letter: 'B', label: 'Reject', text: 'Say why in the box below: the next retrospectives read your reason and do not propose it again without new evidence.' },
       { letter: 'C', label: 'Not now', text: 'Keep it here for later. Nothing changes meanwhile.' },
     ],
@@ -231,7 +235,13 @@ async function refresh() {
   for (const p of props) proposalOf.set(proposalKey.get(p.id), p);
 }
 
-const tickets = () => [...[...cardOf].map(([key, c]) => toTicket(c, key)), ...[...proposalOf].map(([key, p]) => proposalTicket(p, key))];
+// ?pipeline=<id>: the board shows one pipeline's tickets (and its instruction proposals) only.
+const pipelineFilter = () => new URLSearchParams(window.location.search).get('pipeline') || '';
+const shown = (pipelineId) => !pipelineFilter() || pipelineFilter() === pipelineId;
+const tickets = () => [
+  ...[...cardOf].filter(([, c]) => shown(c.pipelineId)).map(([key, c]) => toTicket(c, key)),
+  ...[...proposalOf].filter(([, p]) => shown(p.pipelineId)).map(([key, p]) => proposalTicket(p, key)),
+];
 
 const PROPOSAL_RULING = { A: 'apply', B: 'reject', C: 'park' };
 const answerCopy = new Map(); // TEACH key -> what your last answer did, in proposal words
@@ -391,6 +401,16 @@ function relink(root) {
 }
 new MutationObserver((records) => records.forEach((r) => r.addedNodes.forEach((n) => n.nodeType === 1 && relink(n.parentNode || n))))
   .observe(document.documentElement, { childList: true, subtree: true });
+
+enhancePipelineBadges({
+  pipelineOf: (key) => cardOf.get(key)?.pipelineId || proposalOf.get(key)?.pipelineId,
+  pipelines: () => feed?.pipelines || [],
+  counts: () => {
+    const n = {};
+    for (const c of cardOf.values()) n[c.pipelineId] = (n[c.pipelineId] || 0) + 1;
+    return n;
+  },
+});
 
 enhanceTeachCards({
   proposalOf: (key) => proposalOf.get(key),
