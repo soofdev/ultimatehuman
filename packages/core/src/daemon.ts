@@ -593,10 +593,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       patchConfig,
       configPath,
       log,
-      // init skips the first pass when no tracker is connected: it starts as soon as one is.
+      // Each enabled pipeline that never ran gets its first pass (a repo audit may already have run without a tracker).
       onSourceConnected: () => {
-        if (store.listRuns(1).length) return;
-        for (const p of registry.list().filter((x) => x.enabled)) {
+        const ran = new Set(store.listRuns(300).map(pipelineOfRun));
+        for (const p of registry.list().filter((x) => x.enabled && !ran.has(x.id))) {
           const out = rt.trigger(p.id, "onboarding");
           log(`first ${p.id} pass ${out.queued ? "queued" : "started"} now that a source is connected${out.run ? `: ${out.run.id}` : ""}`);
         }

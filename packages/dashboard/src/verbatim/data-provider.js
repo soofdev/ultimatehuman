@@ -76,7 +76,7 @@ const OPTIONS = () => [
         ? `Records it as filed on ${repoOf()}. Dry run: nothing is sent to GitHub while no GitHub token is set.`
         : `Opens the issue on ${repoOf()}.`,
   },
-  { letter: 'B', label: 'Dismiss', text: 'Not a bug. Say why in the box below: the radar keeps it out of the next passes unless its impact grows.' },
+  { letter: 'B', label: 'Dismiss', text: 'Not a real problem. Say why in the box below: its pipeline keeps it out of the next passes unless its impact grows.' },
   { letter: 'C', label: 'Not now', text: 'Park it. It comes back for a fresh look the first time a pass sees a new occurrence.' },
 ];
 
@@ -90,15 +90,15 @@ function decisionOf(card) {
       options: OPTIONS(),
       recommendation: '',
       context: [
-        `What users hit: ${f.symptom}`,
+        `What happens: ${f.symptom}`,
         f.rootCause?.statement && `Root cause (${f.confidence}): ${f.rootCause.statement}`,
-        `Impact: ${i.usersAffected} users, ${i.occurrences} occurrences, ${day(i.firstSeen)} to ${day(i.lastSeen)}, trend ${i.trend}. Severity ${f.severity}.`,
+        `Impact: ${i.usersAffected ? `${i.usersAffected} users, ` : ''}${i.occurrences} occurrence${i.occurrences === 1 ? '' : 's'}, ${day(i.firstSeen)} to ${day(i.lastSeen)}, trend ${i.trend}. Severity ${f.severity}.`,
         ...(f.rootCause?.codePointers || []).map((p) => `${p.path}:${p.line}: ${p.why}`),
       ].filter(Boolean),
     };
   }
   return {
-    question: `${card.title}. The radar dropped it: ${d.reason}.`,
+    question: `${card.title}. ${pipelineName(card.pipelineId)} dropped it: ${d.reason}.`,
     options: OPTIONS(),
     recommendation: '',
     context: [`Dropped ${d.timesDropped || 1} time${d.timesDropped === 1 ? '' : 's'}, last in the ${d.runLabel} (${day(d.at)}).`],
@@ -154,7 +154,7 @@ function toTicket(card, key) {
     return { ...base, queue: 'backlog', gate: v.state, gate_at: v.at, plain: { ...base.plain, how: f.rootCause?.statement || '' } };
   }
   if (f) return { ...base, queue: 'decision', decision: decisionOf(card), answer: null };
-  return { ...base, queue: 'cancelled', cancelled_at: d.at, cancel: { reason: `The radar dropped it in the ${d.runLabel}: ${d.reason}`, requested_at: d.at, acked_at: d.at, ack_error: null } };
+  return { ...base, queue: 'cancelled', cancelled_at: d.at, cancel: { reason: `${pipelineName(card.pipelineId)} dropped it in the ${d.runLabel}: ${d.reason}`, requested_at: d.at, acked_at: d.at, ack_error: null } };
 }
 
 // Agent proposals to amend the instructions (SPEC 7b): the same decision grammar as a finding.

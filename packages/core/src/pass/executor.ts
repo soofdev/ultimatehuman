@@ -905,7 +905,7 @@ export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number
       ptrs++;
     }
   }
-  return { ok: true, note: `${cited.size} evidence items, ${quotes} quotes re-found verbatim${repos.length ? `, ${ptrs} code pointer${ptrs === 1 ? "" : "s"} re-found in the repo` : ""}, ${c.usersAffected} users ≥ floor ${floor}` };
+  return { ok: true, note: `${cited.size} evidence items, ${quotes} quotes re-found verbatim${repos.length ? `, ${ptrs} code pointer${ptrs === 1 ? "" : "s"} re-found in the repo` : ""}, ${floor > 0 ? `${c.usersAffected} users ≥ floor ${floor}` : "no user floor"}` };
 }
 
 function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b: Bundle): Finding {
