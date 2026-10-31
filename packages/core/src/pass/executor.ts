@@ -9,11 +9,24 @@ import type { WindowTracker } from "../governor/tracker";
 import { runClaude, extractJson, type ClaudeRunResult } from "../runner/claude";
 import { readOnlyHttp } from "../plugins/http";
 import { redact, hashUser } from "./redact";
-import { DraftSchema, ReviewSchema, ProposalsSchema, rootCausePrompt, adversarialPrompt, retrospectivePrompt, type Draft, type Review, type CodeContext, type TeamBriefs } from "./prompts";
+import { DraftSchema, ReviewSchema, ProposalsSchema, rootCausePrompt, adversarialPrompt, retrospectivePrompt, type Draft, type Review, type CodeContext, type TeamBriefs, type PassFrame } from "./prompts";
 import { BRIEFS, type Instructions, type LoadedInstructions } from "../instructions/instructions";
 import { buildProposal, proposalFate, runFacts, MAX_PROPOSALS_PER_RUN } from "../instructions/proposals";
 import type { Cluster, RunRecord, StepEntry, PhaseEntry, RuledEntry } from "./types";
+import type { PipelineConfig } from "../pipelines/schema";
+import { REPOS_SOURCE } from "../pipelines/schema";
+import { modelFor, validationGateFor, type PipelineRegistry } from "../pipelines/registry";
+import { pipelineOfRun, pipelineOfFinding, pipelineOfProposal } from "../pipelines/migrate";
+import { repoSignals } from "../pipelines/repo-source";
+import type { TicketWriter } from "../pipelines/tickets";
 
+/**
+ * The generic pass executor: runs ONE pass of ANY pipeline config (collect from the pipeline's
+ * sources -> keep its signal types -> correlate -> floor -> investigate -> deterministic gate ->
+ * adversarial review -> dedupe -> ticket -> retrospective). Everything pipeline-specific comes
+ * from the pipeline entry and its briefs; tickets go through the pipeline's TicketWriter only.
+ * One pass at a time: the runtime (pipelines/runtime.ts) queues the rest.
+ */
 export interface PassExecutorDeps {
   home: string;
   store: Store;
@@ -22,7 +35,11 @@ export interface PassExecutorDeps {
   resolveCredentials: (pluginId: string) => Promise<Record<string, string>>;
   runnerEnv: () => Promise<Record<string, string>>;
   tracker: WindowTracker;
-  instructions: Instructions;
+  registry: PipelineRegistry;
+  /** The narrow ticket door for one pipeline's runs. */
+  tickets: (pipelineId: string) => TicketWriter;
+  /** Called when a pass ends (done or failed), so the runtime can start the next queued one. */
+  onSettled?: () => void;
   emit: (ev: ServerEvent | { type: string; [k: string]: unknown }) => void;
   log: (msg: string) => void;
   model?: string;
@@ -33,7 +50,7 @@ const now = () => new Date().toISOString();
 export class PassExecutor {
   private active: RunRecord | null = null;
   private parkTimer: NodeJS.Timeout | null = null;
-  private loaded = new Map<number, LoadedInstructions>();
+  private loaded = new Map<string, LoadedInstructions>();
 
   constructor(private readonly d: PassExecutorDeps) {}
 
@@ -41,15 +58,17 @@ export class PassExecutor {
     return this.active;
   }
 
-  /** Single-flight: a second trigger while one is running returns the running run. */
-  trigger(trigger: RunRecord["trigger"], lookbackHours?: number): RunRecord {
+  /** Starts one pass of `p`. Single-flight: while a pass runs (or is parked) the running one is returned; the runtime queues instead. */
+  start(p: PipelineConfig, trigger: RunRecord["trigger"], lookbackHours?: number): RunRecord {
     if (this.active && !["done", "failed"].includes(this.active.phase)) return this.active;
     const cfg = this.d.getConfig();
-    const hours = lookbackHours ?? (trigger === "onboarding" ? cfg.radar.firstPassLookbackHours : cfg.radar.lookbackHours);
+    const hours = lookbackHours ?? (trigger === "onboarding" ? p.firstPassLookbackHours : p.lookbackHours);
     const to = new Date();
     const from = new Date(to.getTime() - hours * 3600_000);
     const run: RunRecord = {
       id: `run_${to.toISOString().replace(/[-:T]/g, "").slice(0, 14)}_${randomBytes(2).toString("hex")}`,
+      pipelineId: p.id,
+      pipelineName: p.name,
       trigger,
       phase: "scheduled",
       startedAt: now(),
@@ -68,11 +87,13 @@ export class PassExecutor {
       nextCluster: 0,
     };
     // Hot-load the instruction set (SPEC 7b): this run reads exactly this version, even if it parks and resumes after an edit.
-    const cur = this.d.instructions.current();
-    const ins = this.d.instructions.load(cur.version);
+    const set = this.d.registry.instructions(p.id);
+    const cur = set.current();
+    const ins = set.load(cur.version);
     run.instructions = { version: ins.version, at: ins.at, note: ins.note, minUsersAffected: ins.knobs.minUsersAffected, tokens: ins.tokens };
     run.notes.push(`Ran with instructions v${ins.version} (${shortDate(ins.at)}: ${ins.note}). Users-affected floor ${ins.knobs.minUsersAffected}; briefs ≈${ins.tokens} tokens.`);
     if (cur.warning) run.notes.push(`Instructions: ${cur.warning}.`);
+    run.notes.push(`Pipeline "${p.name}" (${p.id}): sources ${p.sources.join(", ")}${p.signalTypes.length ? `, signal types ${p.signalTypes.join(", ")}` : ", every signal type"}.`);
     const repos = codeContexts(cfg);
     if (repos.length) {
       run.repos = repos;
@@ -105,25 +126,51 @@ export class PassExecutor {
     }
   }
 
+  /** The pipeline entry a run belongs to, read live (a run of a deleted pipeline fails at its next step). */
+  private pipeline(run: RunRecord): PipelineConfig {
+    const p = this.d.registry.get(pipelineOfRun(run));
+    if (!p) throw new Error(`pipeline "${pipelineOfRun(run)}" no longer exists`);
+    return p;
+  }
+
+  private set(run: RunRecord): Instructions {
+    return this.d.registry.instructions(pipelineOfRun(run));
+  }
+
   /** The instruction set a run reads (fixed at trigger). Runs from before instructions existed read v1. */
   private ins(run: RunRecord): LoadedInstructions {
     const v = run.instructions?.version ?? 1;
-    let l = this.loaded.get(v);
+    const key = `${pipelineOfRun(run)}:${v}`;
+    let l = this.loaded.get(key);
     if (!l) {
-      const rec = this.d.instructions.get(v) ?? this.d.instructions.current().version;
-      l = this.d.instructions.load(rec);
-      this.loaded.set(v, l);
+      const set = this.set(run);
+      l = set.load(set.get(v) ?? set.current().version);
+      this.loaded.set(key, l);
     }
     return l;
   }
 
   private floor(run: RunRecord): number {
-    return run.instructions?.minUsersAffected ?? this.d.getConfig().radar.minUsersAffected;
+    return run.instructions?.minUsersAffected ?? this.pipeline(run).minUsersAffected;
   }
 
   private briefs(run: RunRecord): TeamBriefs {
     const l = this.ins(run);
     return { version: l.version, bodies: l.bodies };
+  }
+
+  private frame(run: RunRecord): PassFrame {
+    const p = this.pipeline(run);
+    return { name: p.name, minEvidence: p.gates.minEvidence };
+  }
+
+  /** Pass over: the runtime may start the next queued pipeline. */
+  private settle(): void {
+    try {
+      this.d.onSettled?.();
+    } catch (e) {
+      this.d.log(`starting the next queued pass failed: ${(e as Error).message}`);
+    }
   }
 
   private save(run: RunRecord): void {
@@ -159,6 +206,7 @@ export class PassExecutor {
     run.finishedAt = now();
     this.d.log(`run ${run.id} failed: ${run.error}`);
     this.save(run);
+    this.settle();
   }
 
   private salt(): string {
@@ -184,23 +232,38 @@ export class PassExecutor {
 
   private async execute(run: RunRecord): Promise<void> {
     const cfg = this.d.getConfig();
+    const pipe = this.pipeline(run);
     const dir = this.runDir(run);
 
-    // 1. collect (no LLM)
+    // 1. collect (no LLM): the pipeline's sources only, then its signal types only
     const pc = this.phaseStart(run, "collecting", `Reading the last ${run.lookbackHours} h`);
+    const wanted = (id: string) => pipe.sources.includes("*") || pipe.sources.includes(id);
+    const keepType = (s: Signal) => !pipe.signalTypes.length || pipe.signalTypes.includes(s.type);
     const signals: Signal[] = [];
     for (const p of this.d.plugins) {
-      if (p.manifest.kind !== "source" || cfg.plugins[p.manifest.id]?.enabled === false || !cfg.plugins[p.manifest.id]) continue;
+      if (p.manifest.kind !== "source" || !wanted(p.manifest.id) || cfg.plugins[p.manifest.id]?.enabled === false || !cfg.plugins[p.manifest.id]) continue;
       const before = signals.length;
       try {
         const ctx = await this.ctxFor(p);
-        for await (const s of (p as SourcePlugin).source.collect(ctx, run.window)) signals.push(s);
-        run.sources.push({ pluginId: p.manifest.id, ok: true, signals: signals.length - before, note: `${signals.length - before} signals` });
+        let seen = 0;
+        for await (const s of (p as SourcePlugin).source.collect(ctx, run.window)) {
+          seen++;
+          if (keepType(s)) signals.push(s);
+        }
+        const kept = signals.length - before;
+        run.sources.push({ pluginId: p.manifest.id, ok: true, signals: kept, note: `${kept} signals${seen > kept ? ` (${seen - kept} of other types skipped)` : ""}` });
       } catch (e) {
         run.sources.push({ pluginId: p.manifest.id, ok: false, signals: 0, note: (e as Error).message });
       }
       this.save(run);
     }
+    if (pipe.sources.includes(REPOS_SOURCE)) {
+      const before = signals.length;
+      for (const s of repoSignals(runRepos(run), run.window)) if (keepType(s)) signals.push(s);
+      run.sources.push({ pluginId: REPOS_SOURCE, ok: true, signals: signals.length - before, note: `${signals.length - before} signals from ${runRepos(run).length} watched repo${runRepos(run).length === 1 ? "" : "s"}` });
+      this.save(run);
+    }
+    if (!run.sources.length) run.notes.push(`No configured source matches this pipeline's sources (${pipe.sources.join(", ")}).`);
     run.signalsCollected = signals.length;
     run.signals = signals;
     const salt = this.salt();
@@ -214,7 +277,7 @@ export class PassExecutor {
 
     // 2. correlate (deterministic)
     const pr = this.phaseStart(run, "correlating");
-    const all = correlate(signals);
+    const all = correlate(signals, pipe.legacyClusterIds ? "" : `${pipe.id}|`);
     const clusters = this.applyRulings(run, all);
     const floor = this.floor(run);
     const keep: Cluster[] = [];
@@ -223,7 +286,7 @@ export class PassExecutor {
         run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "floor", reason: `${c.usersAffected} user${c.usersAffected === 1 ? "" : "s"} affected, below the ${floor}-user floor (instructions v${run.instructions?.version ?? 1})`, usersAffected: c.usersAffected, at: now() });
       } else keep.push(c);
     }
-    const cap = cfg.radar.maxFindingsPerRun * 2;
+    const cap = pipe.maxFindingsPerPass * 2;
     for (const c of keep.slice(cap)) run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "rank", reason: `ranked below the top ${cap} clusters`, usersAffected: c.usersAffected, at: now() });
     run.clusters = keep.slice(0, cap);
     for (const c of run.clusters)
@@ -235,7 +298,6 @@ export class PassExecutor {
   }
 
   private async rootCauseLoop(run: RunRecord): Promise<void> {
-    const cfg = this.d.getConfig();
     const dir = this.runDir(run);
     if (!run.signals) {
       const p = join(dir, "signals.full.json");
@@ -269,7 +331,8 @@ export class PassExecutor {
     run.phase = "done";
     run.finishedAt = now();
     this.save(run);
-    this.d.log(`run ${run.id} done: ${run.findings} findings, ${run.dropped.length} dropped, $${run.costUsd.toFixed(2)}`);
+    this.d.log(`run ${run.id} (${pipelineOfRun(run)}) done: ${run.findings} findings, ${run.dropped.length} dropped, $${run.costUsd.toFixed(2)}`);
+    this.settle();
   }
 
   private step(run: RunRecord, c: Cluster, kind: StepEntry["step"]): StepEntry {
@@ -330,7 +393,7 @@ export class PassExecutor {
       return null;
     }
     const before = tr.reading()?.fiveHourPct;
-    const model = this.d.model ?? cfg.models[STAGE_OF[kind]];
+    const model = this.d.model ?? modelFor(cfg, this.d.registry.get(pipelineOfRun(run)), STAGE_OF[kind]);
     s.model = model;
     const res = await runClaude({
       prompt,
@@ -391,13 +454,12 @@ export class PassExecutor {
   }
 
   private async processCluster(run: RunRecord, c: Cluster, idx: number, dir: string): Promise<boolean> {
-    const cfg = this.d.getConfig();
     const cdir = join(dir, `c${idx + 1}`);
     const bundle = await this.buildBundle(run, c, cdir);
 
     // root-cause
     const s1 = this.step(run, c, "root_cause");
-    const r1 = await this.agent(run, s1, "root_cause", rootCausePrompt(this.floor(run), this.briefs(run), runRepos(run)), cdir);
+    const r1 = await this.agent(run, s1, "root_cause", rootCausePrompt(this.floor(run), this.briefs(run), runRepos(run), this.frame(run)), cdir);
     if (!r1) return true;
     if (!r1.ok) {
       this.endStep(run, s1, "failed", r1.error ?? "agent failed");
@@ -421,7 +483,7 @@ export class PassExecutor {
 
     // deterministic gate
     const s2 = this.step(run, c, "gate");
-    const gate = deterministicGate(draft, bundle, c, this.floor(run), runRepos(run));
+    const gate = deterministicGate(draft, bundle, c, this.floor(run), runRepos(run), this.frame(run).minEvidence);
     if (!gate.ok) {
       this.endStep(run, s2, "dropped", gate.reason);
       run.dropped.push({ clusterId: c.id, clusterTitle: c.title, stage: "gate", reason: gate.reason, usersAffected: c.usersAffected, title: draft.title ?? "", at: now() });
@@ -431,7 +493,7 @@ export class PassExecutor {
 
     // adversarial
     const s3 = this.step(run, c, "adversarial");
-    const r3 = await this.agent(run, s3, "adversarial", adversarialPrompt(JSON.stringify(draft, null, 2), this.briefs(run), runRepos(run)), cdir);
+    const r3 = await this.agent(run, s3, "adversarial", adversarialPrompt(JSON.stringify(draft, null, 2), this.briefs(run), runRepos(run), this.frame(run)), cdir);
     if (!r3) return true;
     const review = r3.ok ? await this.parseWithRepair<Review>(run, s3, "adversarial", r3, cdir, ReviewSchema as any) : null;
     if (review === "parked") return true;
@@ -457,14 +519,13 @@ export class PassExecutor {
     const prior = this.d.store.findingsByFingerprint(finding.dedupe.fingerprint).filter((f) => f.runId !== run.id);
     if (prior.length) (finding as any).recurredFrom = prior[0]!.id;
     this.endStep(run, s4, "passed", prior.length ? `recurred: matches ${prior[0]!.id}` : "new: no match in the local store");
-    // features.validationGate: the finding waits for a human promotion. Off: no field, it flows straight through.
-    if (this.d.getConfig().features.validationGate) (finding as any).validation = { state: "pending", at: now() };
-    this.d.store.saveFinding(finding);
+    // validationGate (the pipeline's, else the global flag): the finding waits for a human promotion. Off: no field, it flows straight through.
+    if (validationGateFor(this.d.getConfig(), this.d.registry.get(pipelineOfRun(run)))) (finding as any).validation = { state: "pending", at: now() };
+    this.d.tickets(pipelineOfRun(run)).create(finding);
     run.findings++;
     run.findingIds.push(finding.id);
     if (!(run as any).firstFindingAt) (run as any).firstFindingAt = now();
     this.save(run);
-    this.d.emit({ type: "finding.new", finding });
     return false;
   }
 
@@ -477,7 +538,9 @@ export class PassExecutor {
   private async retrospective(run: RunRecord): Promise<void> {
     const store = this.d.store;
     const ins = this.ins(run);
-    const base = this.d.instructions.get(ins.version) ?? this.d.instructions.current().version;
+    const set = this.set(run);
+    const pid = pipelineOfRun(run);
+    const base = set.get(ins.version) ?? set.current().version;
     if (!run.dropped.length && !run.ruled?.length && !run.findings) {
       run.retrospective = { status: "skipped", note: "nothing to learn from: this pass saw no cluster", proposalIds: [] };
       return;
@@ -489,7 +552,8 @@ export class PassExecutor {
 
     // Everything a proposal may cite, with a plain label for its card.
     const known = new Map<string, string>();
-    const runs = store.listRuns(12).map((r) => (r.id === run.id ? run : r));
+    // This pipeline's passes only: another pipeline's drops are not evidence about these briefs.
+    const runs = store.listRuns(60).filter((r) => pipelineOfRun(r) === pid).slice(0, 12).map((r) => (r.id === run.id ? run : r));
     const facts = runFacts(runs, (id) => (store.getFinding(id) as any)?.clusterId);
     // A pass that died mid-way proves nothing: it is named as such, never offered as evidence.
     const dead = runs.filter((r) => facts.get(r.id)?.died);
@@ -498,7 +562,8 @@ export class PassExecutor {
       for (const x of [...(r.clusters ?? []), ...(r.dropped ?? []).map((d) => ({ id: d.clusterId, title: d.title ?? d.clusterTitle })), ...(r.ruled ?? []).map((d) => ({ id: d.clusterId, title: d.clusterTitle }))])
         if (!known.has(x.id)) known.set(x.id, x.title);
     }
-    const human = store.allRulings().filter((r) => r.by === "you");
+    const mine = new Set(store.listFindings().filter((f) => pipelineOfFinding(f) === pid).map((f) => (f as any).clusterId as string));
+    const human = store.allRulings().filter((r) => r.by === "you" && (known.has(r.clusterId) || mine.has(r.clusterId)));
     for (const r of human) if (!known.has(r.clusterId) && r.title) known.set(r.clusterId, r.title);
 
     const md: string[] = [`# This pass: ${run.id}`, "", `Window: ${run.window.from} to ${run.window.to}. ${run.signalsCollected} signals. Instructions v${ins.version}, users-affected floor ${this.floor(run)}.`, "", "## Clusters investigated by agents"];
@@ -521,9 +586,9 @@ export class PassExecutor {
     const rl: string[] = ["# Your human's rulings (oldest first)", "", "file = confirmed as a real bug, dismiss = not a bug (reason given), park = not now, clear = ruling withdrawn.", ""];
     for (const r of human.slice(-40)) rl.push(`- ${r.at.slice(0, 16)} ${r.clusterId} "${r.title ?? known.get(r.clusterId) ?? "?"}": ${r.ruling}${r.reason ? ` - "${r.reason}"` : ""}${r.usersAtRuling !== undefined ? ` (${r.usersAtRuling} users at the time)` : ""}`);
     if (!human.length) rl.push("- none yet");
-    const props = store.listProposals(30);
+    const props = store.listProposals(100).filter((p) => pipelineOfProposal(p) === pid).slice(0, 30);
     rl.push("", "## Proposals already made (never repeat one; a rejected one needs NEW evidence)");
-    const versions = this.d.instructions.versions();
+    const versions = set.versions();
     for (const p of props) rl.push(`- ${proposalFate(p, versions) ?? p.status}: "${p.title}" on ${p.brief}.md${p.rulings.at(-1)?.reason ? ` - your human said: "${p.rulings.at(-1)!.reason}"` : ""}`);
     if (!props.length) rl.push("- none yet");
     writeFileSync(join(rdir, "rulings.md"), redact(rl.join("\n")) + "\n");
@@ -543,7 +608,7 @@ export class PassExecutor {
     writeFileSync(join(rdir, "history.md"), redact(hl.join("\n")) + "\n");
 
     const s = this.step(run, { id: "retro", title: "Retrospective: should the instructions change?" } as Cluster, "retrospective");
-    const res = await this.agent(run, s, "retrospective", retrospectivePrompt(ins.version, MAX_PROPOSALS_PER_RUN), rdir);
+    const res = await this.agent(run, s, "retrospective", retrospectivePrompt(ins.version, MAX_PROPOSALS_PER_RUN, this.pipeline(run).name), rdir);
     if (!res) {
       run.retrospective = { status: "skipped", note: s.note ?? "not admitted by the window governor", proposalIds: [] };
       this.phaseEnd(run, ph, run.retrospective.note, "skipped");
@@ -562,13 +627,13 @@ export class PassExecutor {
     const ids: string[] = [];
     const refused: string[] = [];
     for (const d of (out as { proposals: any[] }).proposals.slice(0, MAX_PROPOSALS_PER_RUN)) {
-      const b = buildProposal(d, base, run.id, known, facts);
+      const b = buildProposal(d, base, run.id, known, facts, pid);
       if (!b.ok) {
         refused.push(b.reason);
         this.d.log(`run ${run.id} retrospective: proposal refused by the script: ${b.reason}`);
         continue;
       }
-      if (existing.some((p) => p.id === b.proposal.id || (p.brief === b.proposal.brief && p.after === b.proposal.after && p.status !== "rejected"))) {
+      if (existing.some((p) => p.id === b.proposal.id || (pipelineOfProposal(p) === pid && p.brief === b.proposal.brief && p.after === b.proposal.after && p.status !== "rejected"))) {
         refused.push(`"${b.proposal.title}": already in your cockpit`);
         continue;
       }
@@ -628,12 +693,7 @@ export class PassExecutor {
       const open = findings.find((f: any) => f.clusterId === c.id && f.status === "new");
       if (open) {
         const fresh = after(c, open.impact.lastSeen);
-        if (fresh) {
-          (open as any).impact = { ...open.impact, usersAffected: c.usersAffected, occurrences: c.occurrences, lastSeen: c.lastSeen, trend: c.trend };
-          (open as any).refreshedBy = { runId: run.id, at: now() };
-          store.saveFinding(open);
-          this.d.emit({ type: "finding.updated", finding: open });
-        }
+        if (fresh) this.d.tickets(pipelineOfRun(run)).refresh(open.id, { ...open.impact, usersAffected: c.usersAffected, occurrences: c.occurrences, lastSeen: c.lastSeen, trend: c.trend }, run.id);
         add(c, "awaiting_ruling", fresh ? `already in your feed; impact refreshed to ${c.usersAffected} people, ${c.occurrences} occurrences. Not re-investigated.` : "already in your feed, waiting for your ruling. Not re-investigated.");
         continue;
       }
@@ -656,10 +716,11 @@ export class PassExecutor {
     const salt = this.salt();
     const sigs = (run.signals ?? []).filter((s) => c.signalIds.includes(s.id));
     const ev: Bundle["evidence"] = new Map();
+    const sourceNames = [...new Set(sigs.map((s) => this.d.plugins.find((p) => p.manifest.id === s.pluginId)?.manifest.displayName ?? s.pluginId))];
     const md: string[] = [
       `# Cluster: ${c.title}`,
       "",
-      `Window: ${run.window.from} to ${run.window.to} (${run.lookbackHours} h). Source: PostHog (read-only). Team members' own activity and the project's test-account filters were excluded before counting.`,
+      `Window: ${run.window.from} to ${run.window.to} (${run.lookbackHours} h). Source${sourceNames.length === 1 ? "" : "s"}: ${sourceNames.join(", ") || "none"} (read-only).`,
       `Distinct users affected (deterministic count): ${c.usersAffected}. Occurrences: ${c.occurrences}. Trend vs the previous window: ${c.trend}.`,
       "",
       "## Evidence files",
@@ -671,12 +732,12 @@ export class PassExecutor {
         [`[${id}] ${s.title}`, `type: ${s.type}`, `occurrences: ${s.count}`, `distinct users: ${s.usersAffected ?? "unknown"}`, `first seen: ${s.firstSeen}`, `last seen: ${s.lastSeen}`, ...Object.entries(ex ?? {}).map(([k, v]) => `${k}: ${Array.isArray(v) ? "\n  - " + v.join("\n  - ") : String(v)}`)].join("\n"),
       );
       writeFileSync(join(cdir, "evidence", `${id}.txt`), text + `\nlink: ${s.url}\n`);
-      ev.set(id, { id, url: s.url, kind: s.type === "error_group" ? "error_group" : "event_series", text });
+      ev.set(id, { id, url: s.url, kind: s.type === "error_group" ? "error_group" : s.type === "repo_audit" ? "code" : s.type === "log_pattern" ? "log_lines" : "event_series", text, pluginId: s.pluginId });
       md.push(`- evidence/${id}.txt: ${s.title} (aggregate over the window)`);
     });
-    // Session timelines for the sample sessions behind the cluster.
+    // Session timelines for the sample sessions behind the cluster, from the source that reported them (if it can expand sessions).
     const sessions = [...new Set(sigs.flatMap((s) => (s.keys.sessions as string[]) ?? []))].slice(0, 5);
-    const ph = this.d.plugins.find((p) => p.manifest.id === "posthog") as SourcePlugin | undefined;
+    const ph = this.d.plugins.find((p) => p.manifest.kind === "source" && (p as SourcePlugin).source.expand && sigs.some((s) => s.pluginId === p.manifest.id && (s.keys.sessions as string[] | undefined)?.length)) as SourcePlugin | undefined;
     if (ph?.source.expand && sessions.length) {
       try {
         const exp = (await ph.source.expand(await this.ctxFor(ph), sessions.join(","))) as {
@@ -696,7 +757,7 @@ export class PassExecutor {
             [`[${id}] Session timeline, user ${user}, ${s.events.length} events in session (showing ${slice.length})`, `recording: ${s.hasRecording ? "yes" : "no (link opens the person's event list)"}`, "", ...lines].join("\n"),
           );
           writeFileSync(join(cdir, "evidence", `${id}.txt`), text + `\nlink: ${s.url}\n`);
-          ev.set(id, { id, url: s.url, kind: s.hasRecording ? "recording" : "event_series", text });
+          ev.set(id, { id, url: s.url, kind: s.hasRecording ? "recording" : "event_series", text, pluginId: ph.manifest.id });
           md.push(`- evidence/${id}.txt: what user ${user} did around the problem (session timeline)`);
         }
       } catch (e) {
@@ -714,7 +775,7 @@ type AgentKind = "root_cause" | "adversarial" | "retrospective";
 const STAGE_OF: Record<AgentKind, "radar" | "review" | "retrospective"> = { root_cause: "radar", adversarial: "review", retrospective: "retrospective" };
 
 interface Bundle {
-  evidence: Map<string, { id: string; url: string; kind: Evidence["kind"]; text: string }>;
+  evidence: Map<string, { id: string; url: string; kind: Evidence["kind"]; text: string; pluginId: string }>;
 }
 
 function normalizeLike(path: string): string {
@@ -724,7 +785,8 @@ function normalizeLike(path: string): string {
     .join("/") || "/";
 }
 
-export function correlate(signals: readonly Signal[]): Cluster[] {
+/** Groups signals into clusters. `ns` namespaces the cluster ids per pipeline ("" keeps the pre-pipeline ids). */
+export function correlate(signals: readonly Signal[], ns = ""): Cluster[] {
   const groups = new Map<string, Signal[]>();
   for (const s of signals) {
     const key = s.type === "error_group" ? `fp:${String(s.keys.fingerprint)}` : `route:${String(s.keys.route ?? s.id)}`;
@@ -739,9 +801,10 @@ export function correlate(signals: readonly Signal[]): Cluster[] {
     const route = sigs[0]!.keys.route as string | undefined;
     const kinds = [...new Set(sigs.map((s) => s.title.split(" on ")[0]!.replace(/ \(.*\)$/, "").toLowerCase()))];
     const joined = kinds.length > 1 ? `${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}` : kinds[0];
-    const title = route ? `${joined} on ${route}` : sigs[0]!.title;
+    const named = sigs[0]!.keys.clusterTitle;
+    const title = typeof named === "string" && sigs.every((s) => s.keys.clusterTitle === named) ? named : route ? `${joined} on ${route}` : sigs[0]!.title;
     out.push({
-      id: "c_" + createHash("sha1").update(key).digest("hex").slice(0, 8),
+      id: "c_" + createHash("sha1").update(ns + key).digest("hex").slice(0, 8),
       key,
       title: title.charAt(0).toUpperCase() + title.slice(1),
       ...(route ? { route } : {}),
@@ -811,12 +874,12 @@ export function checkCodePointer(code: CodeContext, ptr: { path: string; line: n
   return { ok: false, reason: `code pointer ${rel}:${ptr.line} not found verbatim: "${ptr.text.slice(0, 80)}"` };
 }
 
-export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number, repos: CodeContext[] = []): { ok: true; note: string } | { ok: false; reason: string } {
+export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number, repos: CodeContext[] = [], minEvidence = 2): { ok: true; note: string } | { ok: false; reason: string } {
   if (!d.title || !d.symptom || !d.rootCause || !d.reproduction || !d.fingerprint || !d.severity || !d.confidence || !d.openQuestions)
     return { ok: false, reason: "a required field is empty (title, symptom, rootCause, reproduction, fingerprint, severity, confidence or openQuestions)" };
   const cited = new Set(d.rootCause.reasoning.flatMap((r) => r.evidenceIds));
   for (const id of cited) if (!b.evidence.has(id)) return { ok: false, reason: `cites evidence ${id}, which is not in the bundle` };
-  if (cited.size < 2) return { ok: false, reason: `only ${cited.size} evidence item cited; at least 2 are required` };
+  if (cited.size < minEvidence) return { ok: false, reason: `only ${cited.size} evidence item${cited.size === 1 ? "" : "s"} cited; at least ${minEvidence} ${minEvidence === 1 ? "is" : "are"} required` };
   for (const id of cited) if (!b.evidence.get(id)!.url) return { ok: false, reason: `evidence ${id} has no URL` };
   let quotes = 0;
   for (const r of d.rootCause.reasoning) {
@@ -827,7 +890,7 @@ export function deterministicGate(d: Draft, b: Bundle, c: Cluster, floor: number
       quotes++;
     }
   }
-  if (c.usersAffected < floor && d.severity !== "critical") return { ok: false, reason: `${c.usersAffected} users affected, below the ${floor}-user floor` };
+  if (floor > 0 && c.usersAffected < floor && d.severity !== "critical") return { ok: false, reason: `${c.usersAffected} users affected, below the ${floor}-user floor` };
   let ptrs = 0;
   if (d.codePointers?.length) {
     if (!repos.length) return { ok: false, reason: "cites code pointers but no code is connected" };
@@ -852,7 +915,7 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
     const e = b.evidence.get(id)!;
     const quote = d.rootCause!.reasoning.flatMap((r) => r.quotes).find((q) => q.evidenceId === id)?.text;
     const label = e.text.split("\n")[0]!.replace(/^\[\w+\]\s*/, "");
-    return { id, sourcePluginId: "posthog", kind: e.kind, url: e.url, excerpt: redact(quote ?? label), observedAt: run.startedAt, label } as Evidence;
+    return { id, sourcePluginId: e.pluginId, kind: e.kind, url: e.url, excerpt: redact(quote ?? label), observedAt: run.startedAt, label } as Evidence;
   });
   const fp = d.fingerprint!;
   const repos = runRepos(run);
@@ -862,6 +925,7 @@ function assembleFinding(run: RunRecord, c: Cluster, d: Draft, review: Review, b
   const f: Finding & Record<string, unknown> = {
     id: "f_" + createHash("sha1").update(fp + run.id).digest("hex").slice(0, 10),
     runId: run.id,
+    pipelineId: pipelineOfRun(run),
     title: rw.title ?? d.title!,
     severity: rw.severity ?? d.severity!,
     confidence: rw.confidence ?? (review.verdict === "partly" ? "likely" : d.confidence!),

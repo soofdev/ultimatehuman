@@ -1,12 +1,12 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * "Teach your radar" (SPEC 7b): the radar's judgment lives in versioned
- * markdown briefs in the home (`instructions/`), hot-loaded at the start of
- * every run. Every save is a new version of the whole set (a snapshot in
- * `instructions/versions/v<N>.json`), so a run names one version and any
- * version is one revert away.
+ * "Teach your pipeline" (SPEC 7b): each pipeline's judgment lives in its own
+ * versioned markdown briefs in the home (`instructions/<pipeline id>/`),
+ * hot-loaded at the start of every pass. Every save is a new version of the
+ * whole set (a snapshot in `instructions/<pipeline id>/versions/v<N>.json`), so
+ * a pass names one version and any version is one revert away.
  *
  * What stays in code (the rails, never editable here): read-only tools, the
  * evidence-citation and verbatim-quote checks, the JSON output contracts, the
@@ -14,7 +14,7 @@ import { join } from "node:path";
  * every knob a brief may set.
  */
 
-export const BRIEF_IDS = ["collector", "admission", "gate", "scope"] as const;
+export const BRIEF_IDS = ["mission", "collector", "admission", "gate", "scope"] as const;
 export type BriefId = (typeof BRIEF_IDS)[number];
 
 export interface BriefMeta {
@@ -26,6 +26,7 @@ export interface BriefMeta {
 }
 
 export const BRIEFS: readonly BriefMeta[] = [
+  { id: "mission", file: "mission.md", title: "Mission", feeds: "Both agents: what this pipeline looks for, and what a ticket from it is." },
   { id: "collector", file: "collector.md", title: "Investigation checklist", feeds: "The root-cause agent works through it on every cluster." },
   { id: "admission", file: "admission.md", title: "Admission rules", feeds: "The user floor (applied before any agent runs) and what the root-cause agent counts as a real problem." },
   { id: "gate", file: "gate.md", title: "Gate verdict policy", feeds: "The adversarial reviewer: what it checks and when a draft holds, is partly right, or is broken." },
@@ -34,11 +35,11 @@ export const BRIEFS: readonly BriefMeta[] = [
 
 /** Rails: listed in the editor so the user sees what an edit can never change. */
 export const RAILS: readonly string[] = [
-  "Agents only read: Read, Grep and Glob on the run's bundle and the read-only repo checkout. No shell, no writes, no web.",
+  "Agents only read: Read, Grep and Glob on the pass's bundle and the read-only repo checkouts. No shell, no writes, no web.",
   "Every reasoning claim cites evidence and a quote that is re-found verbatim in the bundle; code pointers are re-found in the repo.",
-  "At least 2 evidence items with links per finding; the answer must match the step's JSON format.",
-  "Caps: clusters investigated per run (radar.maxFindingsPerRun × 2), 6000 characters per brief, 2 agent proposals per run.",
-  "Knob bounds: minUsersAffected is a whole number from 1 to 1000.",
+  "Evidence items with links per finding: at least the pipeline's gates.minEvidence (default 2); the answer must match the step's JSON format.",
+  "Caps: clusters investigated per pass (the pipeline's maxFindingsPerPass × 2), 6000 characters per brief, 2 agent proposals per pass.",
+  "Knob bounds: minUsersAffected is a whole number from 0 (no floor) to 1000.",
   "Nothing is filed without your ruling; a proposal never applies itself.",
 ];
 
@@ -81,7 +82,7 @@ export function parseKnobs(admission: string): { ok: true; knobs: Knobs } | { ok
   const line = /^\s*minUsersAffected\s*:\s*(\S+)\s*$/m.exec(fm);
   if (!line) return { ok: false, error: 'admission.md must keep its front matter line "minUsersAffected: <number>"' };
   const n = Number(line[1]);
-  if (!Number.isInteger(n) || n < 1 || n > 1000) return { ok: false, error: `minUsersAffected must be a whole number from 1 to 1000 (got "${line[1]}")` };
+  if (!Number.isInteger(n) || n < 0 || n > 1000) return { ok: false, error: `minUsersAffected must be a whole number from 0 to 1000 (got "${line[1]}")` };
   return { ok: true, knobs: { minUsersAffected: n } };
 }
 
@@ -93,6 +94,11 @@ export function validateBrief(id: BriefId, text: string): string | null {
     if (!k.ok) return k.error;
   }
   return null;
+}
+
+/** The admission brief with its floor knob set to `n` (used once, when a pipeline's v1 is written). */
+export function withFloor(admission: string, n: number): string {
+  return admission.replace(/^(\s*minUsersAffected\s*:\s*)\S+\s*$/m, `$1${n}`);
 }
 
 /** Brief as the agent reads it: front matter (knobs, comments) removed, {{knob}} placeholders filled. */
@@ -129,57 +135,22 @@ export function lineDiff(a: string, b: string): DiffLine[] {
   return out;
 }
 
-export function defaultBriefs(seed: { minUsersAffected: number }): Record<BriefId, string> {
-  return {
-    collector: `# Investigation checklist
-
-Work through this for every cluster before you decide.
-
-- Read cluster.md, then every evidence file it lists.
-- In each session timeline, look at what the user did just before and just after the problem.
-- Check whether one user repeats the same action or several users hit it independently.
-- With code connected, find where the event, the error text or the route is produced before you name a cause.
-`,
-    admission: `---
-# Users-affected floor: a cluster touching fewer distinct people is dropped before any agent runs.
-minUsersAffected: ${seed.minUsersAffected}
----
-# Admission rules
-
-What counts as a real product problem worth an engineer's time.
-
-- Precision over recall. Return verdict "no_finding" when the evidence is weak: fewer than {{minUsersAffected}} distinct real users, behaviour that is expected product behaviour (e.g. clicking plain text, selecting text, a tooltip), or anything you would not bet your reputation on in front of the product's engineers.
-`,
-    gate: `# Gate verdict policy
-
-Try hard to BREAK the draft. A wrong finding filed to engineers costs more trust than a missed one. Check:
-- Does each claim actually follow from the cited evidence, or does it overreach?
-- Alternative explanations: expected behaviour (plain text or non-interactive element), a single user repeating themselves, internal or test traffic, bots, a tracker artefact, a page that is simply slow.
-- Is the root-cause statement stronger than the data allows? Is the severity inflated? Is the user count right?
-- Is the title honest about what users experience?
-
-When to use each verdict:
-- "holds": the draft is supported as written.
-- "partly": the problem is real but something is overstated; give the corrected fields in "rewrite".
-- "broken": the evidence does not support a finding.
-If your objection contradicts the central causal claim (the corrected statement would no longer explain why users hit the problem), the verdict is "broken", not "partly". "partly" is only for overstatements that leave a real, explained problem standing. A "partly" rewrite must be a single clear root-cause sentence, not a list of sub-observations.
-`,
-    scope: `# Scope
-
-- In scope: what real users of the product experience.
-- Out of scope: bot-like traffic, internal or test traffic.
-`,
-  };
-}
-
 const same = (a: Record<string, string>, b: Record<string, string>) => BRIEF_IDS.every((id) => a[id] === b[id]);
 
+/**
+ * One pipeline's instruction set. `seed` gives the briefs v1 is written from (the pipeline's
+ * template copy, or a blank skeleton); a brief missing from an older version (e.g. `mission`,
+ * added with multi-pipeline) reads as its seed, so old versions stay valid.
+ */
 export class Instructions {
   readonly dir: string;
   private readonly vdir: string;
 
-  constructor(home: string, private readonly seed: () => { minUsersAffected: number }) {
-    this.dir = join(home, "instructions");
+  constructor(
+    dir: string,
+    private readonly seed: () => Record<BriefId, string>,
+  ) {
+    this.dir = dir;
     this.vdir = join(this.dir, "versions");
   }
 
@@ -187,10 +158,10 @@ export class Instructions {
   ensure(): void {
     mkdirSync(this.vdir, { recursive: true, mode: 0o700 });
     if (this.latestNumber() === 0) {
-      const defaults = defaultBriefs(this.seed());
+      const defaults = this.seed();
       const onDisk = this.readDisk();
       const briefs = Object.fromEntries(BRIEF_IDS.map((id) => [id, onDisk[id] ?? defaults[id]])) as Record<BriefId, string>;
-      this.write({ version: 1, at: new Date().toISOString(), by: "defaults", note: "Defaults written by the engine", changed: [...BRIEF_IDS], briefs });
+      this.write({ version: 1, at: new Date().toISOString(), by: "defaults", note: "Copied from the pipeline's template by the engine", changed: [...BRIEF_IDS], briefs });
     }
     // Missing files are restored from the latest version (the cockpit always edits through a save).
     const latest = this.get(this.latestNumber())!;
@@ -219,7 +190,14 @@ export class Instructions {
 
   get(version: number): VersionRecord | undefined {
     const p = join(this.vdir, `v${version}.json`);
-    return existsSync(p) ? (JSON.parse(readFileSync(p, "utf8")) as VersionRecord) : undefined;
+    if (!existsSync(p)) return undefined;
+    const v = JSON.parse(readFileSync(p, "utf8")) as VersionRecord;
+    const missing = BRIEF_IDS.filter((id) => typeof v.briefs[id] !== "string");
+    if (missing.length) {
+      const seed = this.seed();
+      for (const id of missing) v.briefs[id] = seed[id];
+    }
+    return v;
   }
 
   versions(): VersionRecord[] {
@@ -271,7 +249,8 @@ export class Instructions {
   /** A version, ready for the agents (knobs parsed, bodies cleaned). */
   load(v: VersionRecord): LoadedInstructions {
     const k = parseKnobs(v.briefs.admission);
-    const knobs = k.ok ? k.knobs : { minUsersAffected: this.seed().minUsersAffected };
+    const fallback = parseKnobs(this.seed().admission);
+    const knobs = k.ok ? k.knobs : fallback.ok ? fallback.knobs : { minUsersAffected: 1 };
     const bodies = Object.fromEntries(BRIEF_IDS.map((id) => [id, briefBody(v.briefs[id], knobs)])) as Record<BriefId, string>;
     return { version: v.version, at: v.at, note: v.note, knobs, bodies, tokens: BRIEF_IDS.reduce((a, id) => a + estimateTokens(bodies[id]), 0) };
   }
@@ -284,4 +263,19 @@ export class InstructionError extends Error {
   ) {
     super(message);
   }
+}
+
+/**
+ * Multi-pipeline migration (codebase-side, runs at boot): a home from before pipelines kept ONE
+ * set at `instructions/` (briefs + versions/). It moves, history intact, to `instructions/<id>/`
+ * of the pipeline the old radar config became. Idempotent: does nothing once moved.
+ */
+export function migrateLegacyInstructions(home: string, toPipelineId: string): boolean {
+  const root = join(home, "instructions");
+  const target = join(root, toPipelineId);
+  if (!existsSync(join(root, "versions")) || existsSync(target)) return false;
+  mkdirSync(target, { recursive: true, mode: 0o700 });
+  renameSync(join(root, "versions"), join(target, "versions"));
+  for (const b of BRIEFS) if (existsSync(join(root, b.file))) renameSync(join(root, b.file), join(target, b.file));
+  return true;
 }

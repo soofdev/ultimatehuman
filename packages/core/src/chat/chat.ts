@@ -21,7 +21,7 @@ const SESSION_KEY = "chat.session";
 /** Hash of the system prompt the saved session started with: `--resume` keeps that prompt, so a changed prompt needs a new session. */
 const PROMPT_KEY = "chat.session.prompt";
 
-export const CHAT_SYSTEM = `You are the setup assistant of this ultimatehuman install (a local radar that reads error trackers and analytics, and turns real user pain into findings a human rules on).
+export const CHAT_SYSTEM = `You are the setup assistant of this ultimatehuman install (a local engine that runs PIPELINES: each one reads some sources — error trackers, analytics, logs, or the watched repos themselves — and turns real problems into tickets a human rules on).
 You talk to the person who installed it, through the dashboard Chat page, the \`ultimatehuman chat\` CLI or Telegram — it is one conversation; each user message is tagged with the door it came through.
 Your job: explain the config and change it for them. You have NO shell; you can Read and Glob files, and Write only into the chat outbox. Each message carries the current config file (JSON5) — that is the source of truth.
 Files: a line "[user sent a photo, saved at /abs/path]" means the user attached that file — Read it to see it. You CAN send files and images back: put [[send:/absolute/path]] on its own line in your reply; the tag is stripped, the dashboard shows the image inline and Telegram delivers it as a photo. Any existing file inside this install's home (inbox images included) or a configured repo can be sent as is — no copy needed. To make a new image, Write an SVG into \${OUTBOX}/ and send that path.
@@ -29,6 +29,8 @@ To change the config, end your reply with ONE fenced block tagged config-patch h
 \`\`\`config-patch
 { "features": { "validationGate": true } }
 \`\`\`
+Arrays of objects that carry an "id" (pipelines, auth.sources) can also be patched BY ID with an object instead of an array: { "pipelines": { "<id>": { ...fields to merge } } } edits one entry, "<id>": null removes it, an unknown id appends a new entry. Prefer this over rewriting the whole array.
+PIPELINES: every message carries the pipeline list and the templates. A pipeline is data: id, name, description, enabled, schedule ("M H * * *" daily local time, "every N hours", a cron, or "manual"), sources (plugin ids, "*" = all configured, "repos" = audit the watched repos), signalTypes (empty = all), lookbackHours, maxFindingsPerPass, models (per-stage overrides: radar, review, retrospective), features.validationGate, gates.minEvidence. To add one from a template, patch { "pipelines": { "<new id>": { "template": "<template id>" } } }: the engine copies the template's settings and briefs in, and the user owns them from then on (add "name", "schedule", "enabled" etc. alongside to override). A blank one needs at least id (the key), "name", and usually "sources"; its briefs start as a skeleton the user edits in Config > Instructions. Disable with "enabled": false; delete with null (its briefs are archived). Briefs (mission, checklist, admission, gate, scope) are NOT in the config: they are edited and versioned in Config > Instructions, per pipeline.
 The daemon validates and applies it, then tells the user what changed (or why it was refused). Never put a secret value in a patch: secrets must be "\${ENV_VAR}" references. Only patch what the user asked for. Be brief: short sentences, no tables.
 Setup status: each message also carries the setup grade (Bronze → Silver → Gold → Platinum), what unlocks the next tier, and the PENDING LEDGER — what init skipped and why it matters. You are the concierge for it:
 - "What's missing?" → list each pending item: what it is, the tier it helps reach (say plainly whether it moves the grade now), and the one next step. Lead with what unlocks the next tier.
@@ -51,11 +53,27 @@ export interface ChatDeps {
   setupStatus?: () => Promise<string>;
 }
 
-/** Deep merge for config patches: objects merge, everything else replaces, null deletes. */
+const isObj = (x: unknown): x is Record<string, any> => !!x && typeof x === "object" && !Array.isArray(x);
+
+/**
+ * Deep merge for config patches: objects merge, everything else replaces, null deletes.
+ * An OBJECT patch onto an array of `id`-carrying objects merges by id: { "<id>": {...} } edits
+ * that entry (or appends it), { "<id>": null } removes it. An array patch still replaces.
+ */
 export function mergePatch(target: Record<string, any>, patch: Record<string, any>): Record<string, any> {
   for (const [k, v] of Object.entries(patch)) {
     if (v === null) delete target[k];
-    else if (typeof v === "object" && !Array.isArray(v) && typeof target[k] === "object" && target[k] && !Array.isArray(target[k])) mergePatch(target[k], v);
+    else if (isObj(v) && Array.isArray(target[k]) && target[k].every((x: unknown) => isObj(x) && typeof x.id === "string")) {
+      const list = target[k] as Record<string, any>[];
+      for (const [id, sub] of Object.entries(v)) {
+        const i = list.findIndex((x) => x.id === id);
+        if (sub === null) {
+          if (i >= 0) list.splice(i, 1);
+        } else if (!isObj(sub)) throw new Error(`${k}.${id}: send an object of fields, or null to remove it`);
+        else if (i >= 0) mergePatch(list[i]!, sub);
+        else list.push({ id, ...sub });
+      }
+    } else if (typeof v === "object" && !Array.isArray(v) && typeof target[k] === "object" && target[k] && !Array.isArray(target[k])) mergePatch(target[k], v);
     else target[k] = v;
   }
   return target;

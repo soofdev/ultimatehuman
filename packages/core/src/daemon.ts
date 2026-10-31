@@ -5,7 +5,7 @@ import { join, dirname, basename } from "node:path";
 import type { Finding, Plugin } from "@ultimatehuman/sdk";
 import type { Config } from "./config/schema";
 import JSON5 from "json5";
-import { configJsonSchema, MODEL_CHOICES, MODEL_STAGES, DEFAULT_MODEL } from "./config/schema";
+import { configJsonSchema, migrateConfig, MODEL_CHOICES, MODEL_STAGES, DEFAULT_MODEL } from "./config/schema";
 import { loadConfig, loadRawConfig, writeConfig, defaultConfigPath, resolveSecretRefs, type SecretRefValue } from "./config/load";
 import { ensureHome, controlKey } from "./home";
 import { Store } from "./store/store";
@@ -14,7 +14,13 @@ import { PassExecutor, publicRun } from "./pass/executor";
 import { renderIssue } from "./pass/issue";
 import { startServer, type RunningServer } from "./server/http";
 import { buildCockpit, backfillFindingClusters } from "./cockpit";
-import { Instructions, InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, estimateTokens, validateBrief, type BriefId } from "./instructions/instructions";
+import { InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, estimateTokens, validateBrief, migrateLegacyInstructions, type BriefId } from "./instructions/instructions";
+import { PipelineRegistry, instantiate, blankPipeline, templateById } from "./pipelines/registry";
+import { PipelineRuntime } from "./pipelines/runtime";
+import { ticketWriter, ExternalTicketSchema, externalFinding } from "./pipelines/tickets";
+import { LEGACY_PIPELINE_ID, pipelineOfRun, pipelineOfProposal, pipelineOfFinding } from "./pipelines/migrate";
+import { EXTERNAL_PIPELINE_ID, PIPELINE_ID, SIGNAL_TYPE_SUGGESTIONS, REPOS_SOURCE } from "./pipelines/schema";
+import { TEMPLATES } from "./pipelines/templates";
 import { ruleProposal } from "./instructions/proposals";
 import { Notifier } from "./notify/notifier";
 import { gradeSetup, gradeProbes } from "./setup/grade";
@@ -22,12 +28,13 @@ import { setupStatusText } from "./setup/pending";
 import { checkPending, currentGrade } from "./setup/concierge";
 import { loadEngineEnv } from "./envfile";
 import { Chat, mergePatch } from "./chat/chat";
+import { validationGateFor } from "./pipelines/registry";
 import { ChatTelegram } from "./chat/telegram";
 import { allowedFile, fileType, saveToInbox, sentNote } from "./chat/files";
 
 export interface DaemonHandle {
   server: RunningServer;
-  radar: PassExecutor;
+  runtime: PipelineRuntime;
   stop(): Promise<void>;
 }
 
@@ -38,7 +45,7 @@ export interface DaemonOptions {
 }
 
 /**
- * Daemon entry: config, store (schema created at startup), governor, radar,
+ * Daemon entry: config, store (schema created at startup), governor, pipelines (registry + runtime),
  * local HTTP + WS server. Parked runs are re-armed from the store on boot.
  */
 export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
@@ -55,9 +62,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const store = new Store(home);
   const backfilled = backfillFindingClusters(store);
   if (backfilled) log(`linked ${backfilled} older finding${backfilled === 1 ? "" : "s"} to ${backfilled === 1 ? "its" : "their"} cluster`);
-  // Instruction briefs (SPEC 7b): provisioned by the engine on boot; radar.minUsersAffected only seeds the first version.
-  const instructions = new Instructions(home, () => ({ minUsersAffected: config.radar.minUsersAffected }));
-  instructions.ensure();
+  // Pipelines: each one's instruction set (SPEC 7b) is provisioned by the engine on boot under instructions/<id>/.
+  // A home from before pipelines moves its one set, history intact, to the pipeline the old radar block became.
+  const registry = new PipelineRegistry(home, () => config);
+  if (registry.get(LEGACY_PIPELINE_ID) && migrateLegacyInstructions(home, LEGACY_PIPELINE_ID)) log(`instructions moved to instructions/${LEGACY_PIPELINE_ID}/ (multi-pipeline migration)`);
+  registry.ensureAll();
   const src = config.auth.sources[0]!;
   const tracker = new WindowTracker(store, src.id, src.kind === "anthropic_api_key" ? "api_key" : "subscription", config.governor.humanReservePct);
 
@@ -79,7 +88,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     server?.broadcast(ev);
     notifier.handle(ev as any);
   };
-  const radar = new PassExecutor({
+  let runtime: PipelineRuntime | null = null;
+  const executor = new PassExecutor({
     home,
     store,
     getConfig: () => config,
@@ -87,11 +97,21 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     resolveCredentials,
     runnerEnv,
     tracker,
-    instructions,
+    registry,
+    tickets: (pipelineId) => ticketWriter(store, emit, pipelineId),
+    onSettled: () => runtime?.settled(),
     emit,
     log,
     ...(process.env.ULTIMATEHUMAN_MODEL ? { model: process.env.ULTIMATEHUMAN_MODEL } : {}),
   });
+  runtime = new PipelineRuntime({ executor, registry, store, log, emit });
+  const rt = runtime;
+  const query = (req: { url?: string | undefined }, name: string) => new URL(req.url ?? "/", "http://x").searchParams.get(name);
+  /** The pipeline a request is about (?pipeline= or body.pipelineId), defaulting to the first configured one. */
+  const pipelineParam = (id: unknown) => {
+    const want = typeof id === "string" && id ? id : registry.list()[0]?.id;
+    return want ? registry.get(want) ?? null : null;
+  };
 
   const output = () => opts.plugins.find((p) => p.manifest.kind === "output" && config.plugins[p.manifest.id]);
   const issueFor = (id: string) => {
@@ -152,10 +172,16 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
 
   /** Dashboard edits: patch the file as written (not the defaulted config), validate, write, and use it at once. */
   const patchConfig = async (patch: (raw: Record<string, any>) => void) => {
-    const raw = JSON5.parse(await loadRawConfig(configPath)) as Record<string, any>;
+    const before = new Set(config.pipelines.map((p) => p.id));
+    // Edits apply to the current shape: an old file (single `radar` block) is migrated first, so a pipelines patch lands on a list.
+    const raw = migrateConfig(JSON5.parse(await loadRawConfig(configPath))) as Record<string, any>;
     patch(raw);
     config = await writeConfig(raw, configPath, "// ultimatehuman config. Secrets are ${ENV_VAR} references only. Edited from the dashboard; every write validates first.");
+    // Pipelines added get their instruction set now (copied from their template); deleted ones are archived and unqueued.
+    for (const id of before) if (!registry.get(id)) (registry.archive(id), rt.forget(id), log(`pipeline ${id} deleted; its instructions archived`));
+    registry.ensureAll();
     emit({ type: "config.updated" });
+    emit({ type: "pipelines.updated" });
     return config;
   };
 
@@ -189,9 +215,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         json: {
           version: opts.version,
           window: tracker.status(),
-          lastRun: radar.current() ? publicRun(radar.current()!) : store.listRuns(1)[0] ?? null,
+          lastRun: rt.current() ? publicRun(rt.current()!) : store.listRuns(1)[0] ?? null,
           plugins: opts.plugins.map((p) => ({ id: p.manifest.id, displayName: p.manifest.displayName, kind: p.manifest.kind, configured: !!config.plugins[p.manifest.id] })),
-          counts: { new: buildCockpit(store, radar.current(), dryRunOutput()).counts.new },
+          counts: { new: buildCockpit(store, rt.current(), dryRunOutput()).counts.new },
         },
       }),
       "GET /api/onboarding": async () => ({ json: store.getKv("onboarding") ?? null }),
@@ -204,16 +230,97 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         emit({ type: "onboarding.updated", onboarding: body });
         return { json: { ok: true } };
       },
-      "GET /api/runs": async () => ({ json: { runs: store.listRuns(30) } }),
+      "GET /api/runs": async (req) => {
+        const pid = query(req, "pipeline");
+        const names = new Map(config.pipelines.map((p) => [p.id, p.name]));
+        const runs = store.listRuns(pid ? 300 : 30).filter((r) => !pid || pipelineOfRun(r) === pid).slice(0, 30);
+        return { json: { runs: runs.map((r) => ({ ...r, pipelineId: pipelineOfRun(r), pipelineName: names.get(pipelineOfRun(r)) ?? r.pipelineName ?? pipelineOfRun(r) })), queued: rt.pending() } };
+      },
       "GET /api/runs/:id": async (_r, _b, p) => {
-        const run = radar.current()?.id === p.id ? publicRun(radar.current()!) : store.getRun(p.id!);
+        const run = rt.current()?.id === p.id ? publicRun(rt.current()!) : store.getRun(p.id!);
         return run ? { json: { run } } : { status: 404, json: { error: "no such run" } };
       },
+      // Run now: { pipelineId } (default: the first pipeline). Serialized: while a pass runs, this one queues.
       "POST /api/runs": async (_r, body) => {
-        const run = radar.trigger(body.trigger === "onboarding" ? "onboarding" : "run_now", body.lookbackHours ? Number(body.lookbackHours) : undefined);
-        return { json: { run: publicRun(run) } };
+        const p = pipelineParam(body.pipelineId);
+        if (!p) return { status: 404, json: { error: body.pipelineId ? `no pipeline "${body.pipelineId}"` : "no pipeline is configured" } };
+        const out = rt.trigger(p.id, body.trigger === "onboarding" ? "onboarding" : "run_now", body.lookbackHours ? Number(body.lookbackHours) : undefined);
+        return { json: { run: out.run ? publicRun(out.run) : null, queued: out.queued, position: out.position, pipelineId: p.id } };
       },
-      "GET /api/findings": async () => ({ json: { findings: store.listFindings() } }),
+      "GET /api/pipelines": async () => ({
+        json: {
+          pipelines: rt.summaries(),
+          config: config.pipelines,
+          templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, description: t.description, suggestedByDefault: t.suggestedByDefault, pipeline: t.pipeline })),
+          sources: [...opts.plugins.filter((p) => p.manifest.kind === "source").map((p) => ({ id: p.manifest.id, name: p.manifest.displayName, configured: !!config.plugins[p.manifest.id] })), { id: REPOS_SOURCE, name: "Watched repos (audit)", configured: config.repos.length > 0 }],
+          signalTypes: SIGNAL_TYPE_SUGGESTIONS,
+          running: rt.current() && rt.busy() ? { id: rt.current()!.id, pipelineId: pipelineOfRun(rt.current()!) } : null,
+          queued: rt.pending(),
+        },
+      }),
+      // Create: { template: "<id>", id?, name? } copies a template; { blank: true, id, name } starts empty (disabled, manual).
+      "POST /api/pipelines": async (_r, body) => {
+        const t = body.template ? templateById(String(body.template)) : undefined;
+        if (body.template && !t) return { status: 400, json: { error: `no template "${body.template}"` } };
+        if (!t && !body.blank) return { status: 400, json: { error: "send { template } or { blank: true, id, name }" } };
+        const id = String(body.id ?? (t ? t.id : "")).trim();
+        if (!PIPELINE_ID.test(id) || id === EXTERNAL_PIPELINE_ID) return { status: 400, json: { error: "id: lowercase letters, digits and dashes (and not \"external\")" } };
+        if (registry.get(id)) return { status: 409, json: { error: `a pipeline "${id}" already exists` } };
+        const name = String(body.name ?? (t ? t.name : id)).trim() || id;
+        const entry = t ? instantiate(t, { id, name }) : blankPipeline(id, name);
+        try {
+          await patchConfig((raw) => (raw.pipelines = [...(Array.isArray(raw.pipelines) ? raw.pipelines : config.pipelines), entry]));
+          log(`pipeline ${id} added${t ? ` from template ${t.id}` : " (blank)"}`);
+          return { json: { ok: true, pipeline: registry.get(id) } };
+        } catch (e) {
+          return { status: 400, json: { error: (e as Error).message } };
+        }
+      },
+      // Edit: any subset of the entry's fields (id excluded). null removes an optional field.
+      "POST /api/pipelines/:id": async (_r, body, p) => {
+        if (!registry.get(p.id!)) return { status: 404, json: { error: `no pipeline "${p.id}"` } };
+        const { id: _ignore, ...fields } = (body ?? {}) as Record<string, unknown>;
+        if (!Object.keys(fields).length) return { status: 400, json: { error: "send the fields to change" } };
+        try {
+          await patchConfig((raw) => {
+            const list = (Array.isArray(raw.pipelines) ? raw.pipelines : config.pipelines) as Record<string, unknown>[];
+            raw.pipelines = list.map((x) => (x.id === p.id ? mergePatch(structuredClone(x), fields) : x));
+          });
+          log(`pipeline ${p.id} updated: ${Object.keys(fields).join(", ")}`);
+          return { json: { ok: true, pipeline: registry.get(p.id!) } };
+        } catch (e) {
+          return { status: 400, json: { error: (e as Error).message } };
+        }
+      },
+      "POST /api/pipelines/:id/delete": async (_r, _b, p) => {
+        if (!registry.get(p.id!)) return { status: 404, json: { error: `no pipeline "${p.id}"` } };
+        if (rt.busy() && pipelineOfRun(rt.current()!) === p.id) return { status: 409, json: { error: "a pass of this pipeline is running; delete it once the pass ends" } };
+        try {
+          await patchConfig((raw) => (raw.pipelines = ((Array.isArray(raw.pipelines) ? raw.pipelines : config.pipelines) as Record<string, unknown>[]).filter((x) => x.id !== p.id)));
+          return { json: { ok: true } };
+        } catch (e) {
+          return { status: 400, json: { error: (e as Error).message } };
+        }
+      },
+      "GET /api/findings": async (req) => {
+        const pid = query(req, "pipeline");
+        return { json: { findings: store.listFindings().filter((f) => !pid || pipelineOfFinding(f) === pid) } };
+      },
+      // The open ticket queue (docs/tickets-api.md): any tool enqueues a ticket with the control key (x-uh-control) or a dashboard session.
+      "POST /api/findings": async (_r, body) => {
+        const parsed = ExternalTicketSchema.safeParse(body ?? {});
+        if (!parsed.success) return { status: 400, json: { error: "invalid ticket", issues: parsed.error.issues.map((i) => `${i.path.join(".") || "(body)"}: ${i.message}`) } };
+        const pid = parsed.data.pipelineId ?? EXTERNAL_PIPELINE_ID;
+        if (pid !== EXTERNAL_PIPELINE_ID && !registry.get(pid)) return { status: 400, json: { error: `no pipeline "${pid}": attribute it to a configured pipeline id or leave pipelineId out ("${EXTERNAL_PIPELINE_ID}")` } };
+        if (parsed.data.repo && !config.repos.some((r) => r.name === parsed.data.repo)) return { status: 400, json: { error: `repo "${parsed.data.repo}" is not a configured repo (${config.repos.map((r) => r.name).join(", ") || "none"})` } };
+        const f = externalFinding(parsed.data);
+        const open = store.findingsByFingerprint(f.dedupe.fingerprint).find((x) => x.status === "new");
+        if (open) return { status: 409, json: { error: "a ticket with this fingerprint is already open", finding: open } };
+        if (validationGateFor(config, registry.get(pid))) (f as any).validation = { state: "pending", at: f.createdAt };
+        const saved = ticketWriter(store, emit, pid).create(f);
+        log(`ticket enqueued from outside (${parsed.data.source ?? "unnamed tool"}) on ${pid}: ${saved.title}`);
+        return { status: 201, json: { ok: true, finding: saved } };
+      },
       "GET /api/findings/:id": async (_r, _b, p) => {
         const x = issueFor(p.id!);
         return x ? { json: { finding: x.f, issuePreview: x.issue, repo: x.repo, dryRun: x.dryRun } } : { status: 404, json: { error: "no such finding" } };
@@ -276,7 +383,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         log(`validation: ${action} on ${f.id}`);
         return { json: { ok: true, finding: store.getFinding(f.id) } };
       },
-      "GET /api/cockpit": async () => ({ json: { ...buildCockpit(store, radar.current(), dryRunOutput()), proposals: store.listProposals(30), instructionsVersion: instructions.current().version.version } }),
+      "GET /api/cockpit": async () => ({
+        json: {
+          ...buildCockpit(store, rt.current(), dryRunOutput()),
+          proposals: store.listProposals(30).map((p) => ({ ...p, pipelineId: pipelineOfProposal(p) })),
+          instructionsVersion: registry.list()[0] ? registry.instructions(registry.list()[0]!.id).current().version.version : 0,
+          instructionsVersions: Object.fromEntries(registry.list().map((p) => [p.id, registry.instructions(p.id).current().version.version])),
+          pipelines: [...config.pipelines.map((p) => ({ id: p.id, name: p.name, enabled: p.enabled })), { id: EXTERNAL_PIPELINE_ID, name: "External", enabled: true }],
+        },
+      }),
       "POST /api/rulings": async (_r, body) => {
         const clusterId = String(body.clusterId ?? "");
         const ruling = String(body.ruling ?? "");
@@ -295,13 +410,18 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           steps: store.listUsage("step", 300).map((u) => ({ at: u.at, runId: u.runId, ...u.data })),
         },
       }),
-      "GET /api/instructions": async () => {
+      "GET /api/instructions": async (req) => {
+        const pipe = pipelineParam(query(req, "pipeline"));
+        if (!pipe) return { status: 404, json: { error: "no such pipeline" } };
+        const instructions = registry.instructions(pipe.id);
         const cur = instructions.current();
-        const runs = store.listRuns(30);
+        const runs = store.listRuns(200).filter((r) => pipelineOfRun(r) === pipe.id).slice(0, 30);
         const usedBy = (v: number) => runs.filter((r) => (r.instructions?.version ?? 0) === v).map((r) => ({ id: r.id, startedAt: r.startedAt, trigger: r.trigger, lookbackHours: r.lookbackHours }));
         const vs = instructions.versions();
         return {
           json: {
+            pipeline: { id: pipe.id, name: pipe.name, description: pipe.description },
+            pipelines: config.pipelines.map((p) => ({ id: p.id, name: p.name, enabled: p.enabled, version: registry.instructions(p.id).current().version.version })),
             version: cur.version.version,
             ...(cur.warning ? { warning: cur.warning } : {}),
             dir: instructions.dir,
@@ -327,26 +447,32 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       },
       "POST /api/instructions/diff": async (_r, body) => {
         const id = String(body.brief) as BriefId;
+        const pipe = pipelineParam(body.pipelineId);
+        if (!pipe) return { status: 404, json: { error: "no such pipeline" } };
         if (!BRIEF_IDS.includes(id)) return { status: 400, json: { error: "unknown brief" } };
-        const before = instructions.current().version.briefs[id];
+        const before = registry.instructions(pipe.id).current().version.briefs[id];
         const text = String(body.text ?? "");
         return { json: { diff: lineDiff(before, text), tokensBefore: estimateTokens(before), tokensAfter: estimateTokens(text), error: validateBrief(id, text) } };
       },
       "POST /api/instructions": async (_r, body) => {
+        const pipe = pipelineParam(body.pipelineId);
+        if (!pipe) return { status: 404, json: { error: "no such pipeline" } };
         try {
-          const v = instructions.save(String(body.brief) as BriefId, String(body.text ?? ""), String(body.note ?? ""));
-          log(`instructions v${v.version} saved: ${v.note}`);
-          emit({ type: "instructions.updated", version: v.version });
+          const v = registry.instructions(pipe.id).save(String(body.brief) as BriefId, String(body.text ?? ""), String(body.note ?? ""));
+          log(`instructions ${pipe.id} v${v.version} saved: ${v.note}`);
+          emit({ type: "instructions.updated", pipelineId: pipe.id, version: v.version });
           return { json: { ok: true, version: v.version } };
         } catch (e) {
           return { status: e instanceof InstructionError ? e.status : 500, json: { error: (e as Error).message } };
         }
       },
       "POST /api/instructions/revert": async (_r, body) => {
+        const pipe = pipelineParam(body.pipelineId);
+        if (!pipe) return { status: 404, json: { error: "no such pipeline" } };
         try {
-          const v = instructions.revert(Number(body.version), body.note ? String(body.note) : undefined);
-          log(`instructions v${v.version}: ${v.note}`);
-          emit({ type: "instructions.updated", version: v.version });
+          const v = registry.instructions(pipe.id).revert(Number(body.version), body.note ? String(body.note) : undefined);
+          log(`instructions ${pipe.id} v${v.version}: ${v.note}`);
+          emit({ type: "instructions.updated", pipelineId: pipe.id, version: v.version });
           return { json: { ok: true, version: v.version } };
         } catch (e) {
           return { status: e instanceof InstructionError ? e.status : 500, json: { error: (e as Error).message } };
@@ -359,7 +485,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         if (!["apply", "reject", "park"].includes(ruling)) return { status: 400, json: { error: "ruling must be apply, reject or park" } };
         if (reason.length > 500) return { status: 400, json: { error: "keep the reason under 500 characters" } };
         try {
-          const out = ruleProposal(store, instructions, p.id!, ruling as "apply" | "reject" | "park", reason || null);
+          const out = ruleProposal(store, (x) => registry.instructions(pipelineOfProposal(x)), p.id!, ruling as "apply" | "reject" | "park", reason || null);
           log(`proposal ${p.id}: ${ruling}${out.version ? ` -> instructions v${out.version.version}` : ""}${reason ? ` (${reason})` : ""}`);
           emit({ type: "ruling", proposal: out.proposal });
           if (out.version) emit({ type: "instructions.updated", version: out.version.version });
@@ -434,7 +560,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     },
   });
 
-  radar.rearm();
+  executor.rearm();
   chatTelegram.start();
   // Hot reload: a hand edit is validated; an invalid file keeps the last good config and logs why.
   // Watch the directory, not the file: writeConfig replaces the file by rename, which a file watch does not survive.
@@ -447,14 +573,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         // A config that now references a key saved with `ultimatehuman key` resolves at once, not on the next minute check.
         loadEngineEnv();
         config = await loadConfig(configPath);
+        registry.ensureAll();
         log("config reloaded");
       } catch (e) {
         log(`config invalid, keeping the last good one: ${(e as Error).message}`);
       }
     }, 100);
   });
-  // Minimal daily cron ("M H * * *").
-  const cron = /^(\d+)\s+(\d+)\s+\*\s+\*\s+\*$/.exec(config.radar.schedule);
   // Pending ledger: once a minute on the same tick (plus once at boot), clear what got done and say so.
   let checking = false;
   const pendingCheck = () => {
@@ -471,8 +596,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       // init skips the first pass when no tracker is connected: it starts as soon as one is.
       onSourceConnected: () => {
         if (store.listRuns(1).length) return;
-        const run = radar.trigger("onboarding");
-        log(`first pass started now that a source is connected: ${run.id}`);
+        for (const p of registry.list().filter((x) => x.enabled)) {
+          const out = rt.trigger(p.id, "onboarding");
+          log(`first ${p.id} pass ${out.queued ? "queued" : "started"} now that a source is connected${out.run ? `: ${out.run.id}` : ""}`);
+        }
       },
       announce: async (text) => {
         const msg = store.addChat({ role: "assistant", text, source: "dashboard" });
@@ -488,7 +615,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   let ticks = 0;
   const tick = setInterval(() => {
     const d = new Date();
-    if (cron && d.getMinutes() === Number(cron[1]) && d.getHours() === Number(cron[2]) && d.getSeconds() < 30) radar.trigger("schedule");
+    rt.tick(d);
     if (++ticks % 2 === 0) pendingCheck();
   }, 30_000);
   writeFileSync(join(home, "engine.pid"), String(process.pid));
@@ -496,7 +623,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
 
   return {
     server,
-    radar,
+    runtime: rt,
     stop: async () => {
       clearInterval(tick);
       chatTelegram.stop();

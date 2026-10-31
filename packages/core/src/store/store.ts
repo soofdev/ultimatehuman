@@ -53,6 +53,8 @@ export interface ProposalRuling {
 export interface Proposal {
   id: string;
   runId: string;
+  /** Pipeline whose briefs it amends (absent on proposals from before pipelines). */
+  pipelineId?: string;
   brief: string;
   /** pending = waiting for your ruling; stale = the brief changed so the edit no longer applies. */
   status: "pending" | "applied" | "rejected" | "parked" | "stale";

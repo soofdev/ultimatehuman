@@ -80,8 +80,8 @@ export class Notifier {
     const dropped = run.dropped?.length ?? 0;
     const line =
       run.phase === "failed"
-        ? `Radar pass failed: ${run.error ?? "unknown error"}`
-        : `Radar pass done: ${run.findings} new finding${run.findings === 1 ? "" : "s"}${dropped ? `, ${dropped} dropped` : ""}`;
+        ? `${(run as any).pipelineName ?? "Pipeline"} pass failed: ${run.error ?? "unknown error"}`
+        : `${(run as any).pipelineName ?? "Pipeline"} pass done: ${run.findings} new finding${run.findings === 1 ? "" : "s"}${dropped ? `, ${dropped} dropped` : ""}`;
     const url = `${this.linkBase()}/administration/pipeline-live`;
     this.enqueue(async () => {
       for (const t of targets.filter((x) => x.inst.options?.runSummaries !== false)) await this.send(t, { type: "run.summary", line, url }, `run ${run.id} summary sent: "${line}"`);
