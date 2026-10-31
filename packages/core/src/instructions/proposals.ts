@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Store, Proposal } from "../store/store";
-import type { ProposalDraft } from "../radar/prompts";
-import type { RunRecord } from "../radar/types";
+import type { ProposalDraft } from "../pass/prompts";
+import type { RunRecord } from "../pass/types";
 import { Instructions, InstructionError, BRIEFS, lineDiff, estimateTokens, validateBrief, type BriefId, type VersionRecord } from "./instructions";
 
 /**

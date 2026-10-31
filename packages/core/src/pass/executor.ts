@@ -14,7 +14,7 @@ import { BRIEFS, type Instructions, type LoadedInstructions } from "../instructi
 import { buildProposal, proposalFate, runFacts, MAX_PROPOSALS_PER_RUN } from "../instructions/proposals";
 import type { Cluster, RunRecord, StepEntry, PhaseEntry, RuledEntry } from "./types";
 
-export interface RadarDeps {
+export interface PassExecutorDeps {
   home: string;
   store: Store;
   getConfig: () => Config;
@@ -30,12 +30,12 @@ export interface RadarDeps {
 
 const now = () => new Date().toISOString();
 
-export class Radar {
+export class PassExecutor {
   private active: RunRecord | null = null;
   private parkTimer: NodeJS.Timeout | null = null;
   private loaded = new Map<number, LoadedInstructions>();
 
-  constructor(private readonly d: RadarDeps) {}
+  constructor(private readonly d: PassExecutorDeps) {}
 
   current(): RunRecord | null {
     return this.active;

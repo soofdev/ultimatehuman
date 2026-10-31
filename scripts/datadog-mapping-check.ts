@@ -1,7 +1,7 @@
 // Unit check: Datadog error logs/events -> radar signals -> correlate() clusters.
 // Run: node_modules/.bin/esbuild scripts/datadog-mapping-check.ts --bundle --platform=node --format=esm --outfile=/tmp/dd-check.mjs && node /tmp/dd-check.mjs
 import { logsToSignals, eventsToSignals, normalizeMessage, type DatadogLog } from "../packages/plugins/datadog/src/index";
-import { correlate } from "../packages/core/src/radar/engine";
+import { correlate } from "../packages/core/src/pass/executor";
 
 let fails = 0;
 const ok = (cond: unknown, what: string) => {

@@ -10,8 +10,8 @@ import { loadConfig, loadRawConfig, writeConfig, defaultConfigPath, resolveSecre
 import { ensureHome, controlKey } from "./home";
 import { Store } from "./store/store";
 import { WindowTracker } from "./governor/tracker";
-import { Radar, publicRun } from "./radar/engine";
-import { renderIssue } from "./radar/issue";
+import { PassExecutor, publicRun } from "./pass/executor";
+import { renderIssue } from "./pass/issue";
 import { startServer, type RunningServer } from "./server/http";
 import { buildCockpit, backfillFindingClusters } from "./cockpit";
 import { Instructions, InstructionError, BRIEFS, RAILS, BRIEF_IDS, lineDiff, estimateTokens, validateBrief, type BriefId } from "./instructions/instructions";
@@ -27,7 +27,7 @@ import { allowedFile, fileType, saveToInbox, sentNote } from "./chat/files";
 
 export interface DaemonHandle {
   server: RunningServer;
-  radar: Radar;
+  radar: PassExecutor;
   stop(): Promise<void>;
 }
 
@@ -79,7 +79,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     server?.broadcast(ev);
     notifier.handle(ev as any);
   };
-  const radar = new Radar({
+  const radar = new PassExecutor({
     home,
     store,
     getConfig: () => config,

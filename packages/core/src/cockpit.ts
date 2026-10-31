@@ -1,6 +1,6 @@
 import type { Finding } from "@ultimatehuman/sdk";
 import type { Store, Ruling } from "./store/store";
-import type { RunRecord, DroppedDraft, RuledEntry } from "./radar/types";
+import type { RunRecord, DroppedDraft, RuledEntry } from "./pass/types";
 
 /**
  * The cockpit feed: everything the radar wants from the human, as cards.
