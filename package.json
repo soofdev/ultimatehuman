@@ -2,17 +2,19 @@
   "name": "ultimatehuman",
   "version": "0.0.0",
   "private": true,
-  "description": "Self-hosted bug radar: reads your trackers, root-causes real product problems, files evidence-rich GitHub issues. The AI can look, never touch.",
+  "description": "AI investigates. You decide. Evidence-backed engineering reviews powered by Claude Code.",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@11.10.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "typecheck": "pnpm -r typecheck",
-    "build": "pnpm --filter @ultimatehuman/dashboard build && node scripts/build.mjs",
-    "build:cli": "node scripts/build.mjs"
+    "build": "npm --prefix packages/dashboard run build && node scripts/build.mjs",
+    "build:cli": "node scripts/build.mjs",
+    "release:prepare": "npm run build && node scripts/prepare-release.mjs",
+    "release:check": "node scripts/release-check.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

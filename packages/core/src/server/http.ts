@@ -12,6 +12,7 @@ export interface Route {
 }
 
 export interface ServerOptions {
+  version: string;
   host: string;
   port: number;
   staticDir: string | null;
@@ -72,7 +73,7 @@ export function startServer(o: ServerOptions): Promise<RunningServer> {
         let raw = "";
         for await (const chunk of req) raw += chunk;
         const body = raw ? JSON.parse(raw) : {};
-        if (req.method === "GET" && path === "/api/health") return send(res, 200, { ok: true, version: "0.1.0-slice", home: homeId() });
+        if (req.method === "GET" && path === "/api/health") return send(res, 200, { ok: true, version: o.version, home: homeId() });
         if (req.method === "POST" && path === "/api/auth/redeem") {
           const sid = links.redeem(String(body.code ?? ""));
           if (!sid) return send(res, 401, { error: "This login link was already used or has expired. Run `ultimatehuman dashboard` for a new one." });
