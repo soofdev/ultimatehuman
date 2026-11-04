@@ -1,12 +1,13 @@
 {
   "name": "ultimatehuman",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "files": ["dist", "LICENSE", "NOTICE", "LICENSING.md", "THIRD_PARTY_NOTICES.txt"],
   "engines": { "node": ">=22.13.0" },
   "os": ["darwin", "linux"],
   "type": "module",
-  "description": "AI investigates. You decide. Turn production signals and repository code into evidence-backed engineering reviews, using Claude Code.",
+  "description": "No AI slop. By design. Evidence-checked investigations with human decisions, powered by Claude Code. Read the founder's 80× productivity case in the README.",
+  "author": { "name": "Vincent Wargnier", "email": "vincent@vw-coding.com" },
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",

@@ -2,7 +2,7 @@
   "name": "ultimatehuman",
   "version": "0.0.0",
   "private": true,
-  "description": "AI investigates. You decide. Evidence-backed engineering reviews powered by Claude Code.",
+  "description": "No AI slop. By design. Evidence-checked investigations with human decisions, powered by Claude Code. Read the founder's 80× productivity case in the README.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "packageManager": "pnpm@11.10.0",
