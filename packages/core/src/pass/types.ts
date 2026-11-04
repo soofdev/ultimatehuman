@@ -62,6 +62,9 @@ export interface SourceStat {
 
 export interface RunRecord {
   id: string;
+  /** Captured at creation so a crash resume cannot silently change providers. */
+  provider?: "claude" | "codex";
+  authSource?: string;
   /** The pipeline this pass ran (absent on passes from before pipelines: the migrated pipeline's). */
   pipelineId?: string;
   pipelineName?: string;

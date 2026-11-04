@@ -13,10 +13,10 @@ import { welcome } from "./commands/welcome";
 
 const USAGE = `ultimatehuman <command>
 
-  (no command) Detect Claude and open the shared setup chat
+  (no command) Detect Claude or Codex and open the shared setup chat
   --version   Print the installed version
 
-  init        Detect Claude and set up through chat (--advanced keeps the original wizard)
+  init        Detect your AI CLI and set up through chat (--advanced keeps the original wizard)
   start       Run the engine in the foreground (dashboard on 127.0.0.1:4747)
   doctor      Check config, credentials, scopes and service; --fix repairs
   config      get <path> | set <path> <value> | schema
@@ -32,7 +32,7 @@ const USAGE = `ultimatehuman <command>
   key         <ENV_NAME> saves one secret into the engine env file (prompted, never echoed);
               a pending tracker key is picked up by the running engine within a minute
 
-Repository setup: --repos <path-or-url,path-or-url> --port <n> --no-open
+Repository setup: --repos <path-or-url,path-or-url> --port <n> --no-open --provider claude|codex
 Full setup (init): --pipelines <template,template>, --test-url <url>,
 --project <posthog id>, --repo owner/name, --notify-prefix <text>, --notify-server <url>,
 --port <n>;
@@ -53,6 +53,7 @@ async function main(argv: string[]): Promise<number> {
       "non-interactive": { type: "boolean" },
       "no-open": { type: "boolean" },
       advanced: { type: "boolean" },
+      provider: { type: "string" },
       json: { type: "boolean" },
       fix: { type: "boolean" },
       config: { type: "string" },
@@ -70,12 +71,14 @@ async function main(argv: string[]): Promise<number> {
       force: { type: "boolean" },
     },
   });
+  if (values.provider !== undefined && values.provider !== "claude" && values.provider !== "codex") throw new Error("--provider must be claude or codex");
   const flags = {
     nonInteractive: values["non-interactive"] === true,
     json: values.json === true,
     fix: values.fix === true,
     noOpen: values["no-open"] === true,
     advanced: values.advanced === true,
+    ...(values.provider ? { provider: values.provider as "claude" | "codex" } : {}),
     ...(typeof values.project === "string" ? { project: values.project } : {}),
     ...(typeof values.repo === "string" ? { repo: values.repo } : {}),
     ...(typeof values["notify-prefix"] === "string" ? { notifyPrefix: values["notify-prefix"] } : {}),

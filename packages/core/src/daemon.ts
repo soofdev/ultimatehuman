@@ -35,6 +35,8 @@ import { ChatTelegram } from "./chat/telegram";
 import { allowedFile, fileType, saveToInbox, sentNote } from "./chat/files";
 import { workspaceRoutes, type ServiceControl } from "./setup/workspace";
 import { claudeModelCatalog } from "./runner/models";
+import { providerFor, agentModel, selectProvider, type AgentProvider } from "./runner/provider";
+import { checkProvider } from "./setup/provider";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -81,12 +83,21 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     for (const [k, v] of Object.entries(inst?.credentials ?? {})) out[k] = await resolveSecretRefs(v as SecretRefValue, configPath);
     return out;
   };
-  const runnerEnv = async (): Promise<Record<string, string>> => {
+  const runnerEnv = async (provider: AgentProvider = providerFor(config)): Promise<Record<string, string>> => {
+    const src = config.auth.sources.find((s) => (s.kind === "codex_login") === (provider === "codex"));
+    if (!src) return {};
     if (src.kind === "claude_oauth_token") return { CLAUDE_CODE_OAUTH_TOKEN: await resolveSecretRefs(src.token as SecretRefValue, configPath) };
     if (src.kind === "anthropic_api_key") return { ANTHROPIC_API_KEY: await resolveSecretRefs(src.apiKey as SecretRefValue, configPath) };
     return {};
   };
-  const chatModels = claudeModelCatalog(home, runnerEnv);
+  const catalogs = { claude: claudeModelCatalog(home, () => runnerEnv("claude")), codex: claudeModelCatalog(home, () => runnerEnv("codex"), "codex") };
+  const chatModels = (refresh = false) => catalogs[providerFor(config)](refresh);
+  const authChanged = (next: { auth?: { sources?: unknown[] } }) => JSON.stringify(next.auth?.sources?.[0]) !== JSON.stringify(config.auth.sources[0]);
+  const syncTracker = () => {
+    const source = config.auth.sources[0]!;
+    tracker.setSource(source.id, source.kind === "anthropic_api_key" ? "api_key" : "subscription");
+    tracker.setReserve(config.governor.humanReservePct);
+  };
 
   let server: RunningServer | null = null;
   const notifier = new Notifier({ plugins: opts.plugins, getConfig: () => config, configPath, log });
@@ -184,8 +195,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       // Edits apply to the current shape: an old file (single `radar` block) is migrated first, so a pipelines patch lands on a list.
       const raw = migrateConfig(JSON5.parse(await loadRawConfig(configPath))) as Record<string, any>;
       patch(raw);
+      if (authChanged(raw) && (chat.busy() || (rt.current() && !["done", "failed"].includes(rt.current()!.phase)))) throw new Error("Wait for the current chat and pipeline run to finish before switching AI accounts.");
       config = await writeConfig(raw, configPath, "// ultimatehuman config. Secrets are ${ENV_VAR} references only. Edited from the dashboard; every write validates first.");
-      tracker.setReserve(config.governor.humanReservePct);
+      syncTracker();
       // Pipelines added get their instruction set now (copied from their template); deleted ones are archived and unqueued.
       for (const id of before) if (!registry.get(id)) (registry.archive(id), rt.forget(id), log(`pipeline ${id} deleted; its instructions archived`));
       registry.ensureAll();
@@ -538,15 +550,31 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           return { status: e instanceof InstructionError ? e.status : 500, json: { error: (e as Error).message } };
         }
       },
-      "GET /api/models": async () => ({ json: { stages: MODEL_STAGES, choices: MODEL_CHOICES, default: DEFAULT_MODEL, models: config.models, envOverride: process.env.ULTIMATEHUMAN_MODEL ?? null } }),
+      "GET /api/models": async () => {
+        if (providerFor(config) === "claude") return { json: { provider: "claude", stages: MODEL_STAGES, choices: MODEL_CHOICES, default: DEFAULT_MODEL, models: config.models, envOverride: process.env.ULTIMATEHUMAN_MODEL ?? null } };
+        try {
+          const models = await catalogs.codex();
+          const fallback = models.find((m) => m.isDefault)?.id ?? models[0]!.id;
+          return { json: { provider: "codex", stages: MODEL_STAGES, choices: models.map((m) => ({ ...m, note: m.id === fallback ? "CLI default" : "" })), default: fallback, models: Object.fromEntries(MODEL_STAGES.map((s) => [s.id, config.codexModels[s.id] ?? fallback])), envOverride: process.env.ULTIMATEHUMAN_MODEL ?? null } };
+        } catch (e) { return { status: 503, json: { error: (e as Error).message } }; }
+      },
       "POST /api/config/models": async (_r, body) => {
         const known = new Set<string>(MODEL_STAGES.map((st) => st.id));
         const entries = Object.entries(body ?? {}).filter(([k, v]) => known.has(k) && typeof v === "string");
         if (!entries.length) return { status: 400, json: { error: "send { <stage>: <model id> }" } };
+        const provider = providerFor(config);
         try {
-          const c = await patchConfig((raw) => (raw.models = { ...(raw.models ?? {}), ...Object.fromEntries(entries) }));
+          if (provider === "codex") {
+            const available = await catalogs.codex();
+            if (entries.some(([, value]) => !available.some((m) => m.id === value))) throw new Error("Choose a model from Codex’s current model list.");
+          }
+          const field = provider === "codex" ? "codexModels" : "models";
+          const c = await patchConfig((raw) => {
+            if (providerFor(config) !== provider) throw new Error("The AI account changed. Refresh the model list.");
+            raw[field] = { ...(raw[field] ?? {}), ...Object.fromEntries(entries) };
+          });
           log(`models updated: ${entries.map(([k, v]) => `${k}=${v}`).join(", ")}`);
-          return { json: { ok: true, models: c.models } };
+          return { json: { ok: true, models: c[field] } };
         } catch (e) {
           return { status: 400, json: { error: (e as Error).message } };
         }
@@ -578,24 +606,50 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       },
       "GET /api/chat": async () => ({ json: {
         messages: chat.history(), busy: chat.busy(), activity: chat.progress(),
-        model: config.models.chat ?? DEFAULT_MODEL,
+        model: agentModel(config, "chat"),
+        provider: providerFor(config),
         connections: connections.list(), permissions: chat.permissions(),
-        accountKind: src.kind === "anthropic_api_key" ? "api" : "subscription",
+        accountKind: config.auth.sources[0]?.kind === "anthropic_api_key" ? "api" : "subscription",
         cliCommand: [process.execPath, process.argv[1]].filter(Boolean).map((s) => `'${s!.replace(/'/g, "'\\''")}'`).join(" "),
       } }),
+      "GET /api/chat/providers": async () => ({ json: {
+        current: providerFor(config),
+        providers: await Promise.all((["claude", "codex"] as const).map(async (id) => ({ id, ...await checkProvider(id, () => runnerEnv(id)) }))),
+      } }),
+      "POST /api/chat/provider": async (_r, body) => {
+        if (body.provider !== "claude" && body.provider !== "codex") return { status: 400, json: { error: "Choose Claude or Codex." } };
+        if (chat.busy() || (rt.current() && !["done", "failed"].includes(rt.current()!.phase))) return { status: 409, json: { error: "Wait for the current chat and pipeline run to finish before switching AI accounts." } };
+        try {
+          const readiness = await checkProvider(body.provider, () => runnerEnv(body.provider));
+          if (!readiness.authenticated) return { status: 400, json: { error: readiness.detail, command: readiness.command } };
+          await patchConfig((raw) => selectProvider(raw, body.provider));
+          emit({ type: "chat.provider", provider: providerFor(config) });
+          emit({ type: "window.updated", window: tracker.status() });
+          return { json: { ok: true, provider: providerFor(config), model: agentModel(config, "chat") } };
+        } catch (e) { return { status: 409, json: { error: (e as Error).message } }; }
+      },
       "GET /api/chat/models": async (req) => {
-        const current = config.models.chat ?? DEFAULT_MODEL;
-        try { return { json: { current, default: DEFAULT_MODEL, models: await chatModels(query(req, "refresh") === "1") } }; }
-        catch (e) { return { json: { current, default: DEFAULT_MODEL, models: [], error: (e as Error).message } }; }
+        const provider = providerFor(config);
+        const current = agentModel(config, "chat");
+        try {
+          const models = await chatModels(query(req, "refresh") === "1");
+          const fallback = provider === "claude" ? DEFAULT_MODEL : models.find((m) => m.isDefault)?.id ?? models[0]!.id;
+          return { json: { provider, current: current || fallback, default: fallback, models } };
+        } catch (e) { return { json: { provider, current, default: provider === "claude" ? DEFAULT_MODEL : "", models: [], error: (e as Error).message } }; }
       },
       "POST /api/chat/model": async (_r, body) => {
-        if (typeof body?.model !== "string") return { status: 400, json: { error: "Choose a model from Claude Code." } };
+        if (typeof body?.model !== "string") return { status: 400, json: { error: "Choose a model from the selected CLI." } };
+        const provider = providerFor(config);
         try {
           const models = await chatModels();
-          if (!models.some((m) => m.id === body.model)) return { status: 400, json: { error: "That model is not in Claude Code’s current list. Refresh the list and choose again." } };
-          await patchConfig((raw) => { raw.models = { ...(raw.models ?? {}), chat: body.model }; });
-          emit({ type: "chat.model", model: config.models.chat });
-          return { json: { ok: true, model: config.models.chat } };
+          if (!models.some((m) => m.id === body.model)) return { status: 400, json: { error: "That model is not in the selected CLI’s current list. Refresh and choose again." } };
+          await patchConfig((raw) => {
+            if (providerFor(config) !== provider) throw new Error("The AI account changed. Refresh the model list.");
+            const field = provider === "codex" ? "codexModels" : "models";
+            raw[field] = { ...(raw[field] ?? {}), chat: body.model };
+          });
+          emit({ type: "chat.model", model: agentModel(config, "chat") });
+          return { json: { ok: true, model: agentModel(config, "chat") } };
         } catch (e) { return { status: 503, json: { error: (e as Error).message } }; }
       },
       "GET /api/chat/connections": async () => ({ json: { sources: opts.plugins.filter((p) => p.manifest.id in SOURCE_GUIDES).map((p) => ({
@@ -688,8 +742,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       try {
         // A config that now references a key saved with `ultimatehuman key` resolves at once, not on the next minute check.
         loadEngineEnv();
-        config = await loadConfig(configPath);
-        tracker.setReserve(config.governor.humanReservePct);
+        const next = await loadConfig(configPath);
+        if (authChanged(next) && (chat.busy() || (rt.current() && !["done", "failed"].includes(rt.current()!.phase)))) throw new Error("AI account change deferred: finish active work, then save the configuration again.");
+        config = next;
+        syncTracker();
+        emit({ type: "config.updated" });
         registry.ensureAll();
         log("config reloaded");
       } catch (e) {

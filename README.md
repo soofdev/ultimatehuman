@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="ultimatehuman — 80× productivity. No AI slop. Proof before your attention. Runs on your Claude Code CLI subscription with $0 extra AI spend within its included usage. See the result's basis and cost details below." width="100%" />
+  <img src="docs/assets/hero.svg" alt="ultimatehuman — 80× productivity. No AI slop. Proof before your attention. Runs on your Claude Code or Codex CLI subscription with $0 extra AI spend within its included usage. See the result's basis and cost details below." width="100%" />
 </p>
 
 <p align="center">
@@ -22,16 +22,16 @@ The public release delivers **investigation and human review**. The full workflo
 
 ## Your existing CLI. Your existing subscription.
 
-**Runs on your Claude Code CLI. $0 extra AI spend within your subscription's included usage.** No second AI subscription or separate model API key is required.
+**Runs on your Claude Code or Codex CLI. $0 extra AI spend within your subscription's included usage.** No second AI subscription or separate model API key is required.
 
-The engine reuses your local Claude Code login for chat and investigations. Work counts toward your existing plan's limits. Provider extra usage or a separately configured API key can incur charges. [Claude's billing explanation](https://support.claude.com/en/articles/12304248-manage-api-key-environment-variables-in-claude-code)
+The engine reuses your local Claude Code or Codex ChatGPT login for chat and investigations. Work counts toward your existing plan's limits. Provider extra usage or a separately configured API key can incur charges. [Claude's billing explanation](https://support.claude.com/en/articles/12304248-manage-api-key-environment-variables-in-claude-code)
 
 Commercial licenses for ultimatehuman and any paid tracking or hosting services are separate. [License details](LICENSING.md)
 
 | CLI | Status |
 | --- | --- |
 | **Claude Code** | Available — reuses your local login |
-| **Codex CLI** | Planned — not implemented in this release |
+| **Codex CLI** | Available — reuses your ChatGPT login |
 
 ## Start here
 
@@ -41,11 +41,11 @@ npx ultimatehuman@latest
 
 Run it locally. Set it up through chat. Watch **Pipeline live**. Make the call in **Review**.
 
-Requires **macOS or Linux**, **Node.js 22.13+**, **Git**, and **Claude Code installed and signed in**. [Install Node.js](https://nodejs.org/en/download) · [Set up Claude Code](https://code.claude.com/docs/en/quickstart)
+Requires **macOS or Linux**, **Node.js 22.13+**, **Git**, and **Claude Code or Codex CLI installed and signed in**. [Install Node.js](https://nodejs.org/en/download) · [Set up Claude Code](https://code.claude.com/docs/en/quickstart) · [Set up Codex](https://developers.openai.com/codex/cli)
 
 Free for personal use and internal business use with fewer than 2 employees. Business use with 2 or more employees requires a paid license. [License details](LICENSING.md) · [Contact Vincent](mailto:vincent@vw-coding.com)
 
-The CLI verifies your existing Claude account, starts the local engine, and opens your browser. **Continue in Chat.** Chat and investigations use your configured Claude Code account and count toward its usage limits.
+The CLI detects your installed AI CLI, verifies its existing account, starts the local engine, and opens your browser. **Continue in Chat.** Chat and investigations use your selected AI account and count toward its usage limits.
 
 Start with something like:
 
@@ -55,6 +55,8 @@ Start with something like:
 2. **Connect the signals.** If you already use PostHog or Datadog, connect it through a private credential form inside chat. No tracking yet? Start with a code-only Security check, or ask for help adding tracking.
 3. **Run one pipeline.** Review its scope and schedule, then ask it to run. Follow the investigation in **Pipeline live**.
 4. **Make the decision.** Open a finding in **Review**, inspect its evidence, and accept, dismiss, or set it aside.
+
+If both CLIs are installed, Claude is preferred on first installation. Use `npx ultimatehuman@latest --provider codex` to choose Codex immediately, or switch in Chat. Codex uses ChatGPT sign-in; this connection does not fall back to API-key billing.
 
 Run the same command again to reopen your workspace. Your repositories, settings, and conversation are preserved.
 
@@ -83,7 +85,7 @@ If the evidence does not hold up, a run can finish without a finding. Accepting 
 | **Pipeline live** | Follow queued work, active investigations, evidence checks, blockers, and decisions across the system. |
 | **Review** | Read the problem, impact, and supporting evidence. Record your decision and export an issue draft. |
 
-The browser, terminal, and optional Telegram connection share one conversation. Chat offers the models available in your installed Claude Code, with **Opus 5.5** as its default. Changing the chat model leaves pipeline models unchanged.
+The browser, terminal, and optional Telegram connection share one conversation. Choose **Claude** or **Codex** beside the chat model selector. The provider applies to chat and future pipeline runs. Each CLI keeps its own model choices: Claude starts with **Opus 5.5**; Codex uses its configured CLI default. Changing the chat model leaves pipeline models unchanged.
 
 ## See the product
 
@@ -172,7 +174,7 @@ Prefer a persistent command? Run `npm install -g ultimatehuman`, then `ultimateh
 
 **Does it add an AI bill?** With subscription login, work within your plan's included usage has no additional AI charge. Your existing limits still apply; provider extra usage and API-key billing are separate. ultimatehuman's commercial license and third-party services may also carry costs.
 
-**Can I use Codex CLI?** Not yet. The current installer, chat, and pipeline runner require Claude Code. Codex support is [planned](ROADMAP.md#v2-not-scheduled).
+**Can I use Codex CLI?** Yes. Sign in with `codex login`, then run `npx ultimatehuman@latest --provider codex`. An existing Codex ChatGPT login is reused automatically. Switch providers in Chat when the current work finishes; your conversation, repositories, pipeline settings, and each provider’s model choices are preserved.
 
 **Can one project include several repositories?** Yes. Tell chat which repositories belong together, such as your frontend and API.
 

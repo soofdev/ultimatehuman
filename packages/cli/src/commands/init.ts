@@ -3,7 +3,7 @@ import { openSync, existsSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { ensureHome, connectRepository, controlKey, homeId, writeConfig, TEMPLATES, instantiate, describeSchedule, defaultConfigPath, runClaude, claudeBin, readOnlyHttp, outboundHttp, notifyHosts, scanRepo, detectFramework, gradeSetup, gradeProbes, setEngineEnv, readEnvFile, writeEnvFile, engineEnvPath, type RateLimitReading, type PendingItem } from "@ultimatehuman/core";
+import { ensureHome, connectRepository, controlKey, homeId, writeConfig, TEMPLATES, instantiate, describeSchedule, defaultConfigPath, runAgent, checkProvider, readOnlyHttp, outboundHttp, notifyHosts, scanRepo, detectFramework, gradeSetup, gradeProbes, setEngineEnv, readEnvFile, writeEnvFile, engineEnvPath, type RateLimitReading, type PendingItem } from "@ultimatehuman/core";
 import type { NotifyPlugin, Plugin, ProbeResult } from "@ultimatehuman/sdk";
 import { bundledPlugins } from "../plugins";
 import type { GlobalFlags } from "../flags";
@@ -116,38 +116,27 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
   }
   line.ok("Node", process.versions.node);
 
-  let claudeVersion = "";
-  try {
-    claudeVersion = execFileSync(claudeBin(), ["--version"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim().split(" ")[0] ?? "";
-  } catch {
-    /* not installed */
-  }
   const oauth = findEnv(["CLAUDE_CODE_OAUTH_TOKEN"]);
-  let hasLogin = existsSync(join(homedir(), ".claude", ".credentials.json"));
-  try {
-    // Claude owns macOS Keychain and custom config-directory discovery.
-    hasLogin = JSON.parse(execFileSync(claudeBin(), ["auth", "status"], { stdio: ["ignore", "pipe", "ignore"] }).toString()).loggedIn === true;
-  } catch { /* The live request below remains authoritative, including older CLI versions. */ }
-  if (!claudeVersion) {
-    line.err("Claude", "Claude Code is not installed. Install it, run `claude` once to sign in, then rerun init.");
-    return 1;
-  }
-  const authKind = oauth ? "claude_oauth_token" : "claude_login";
-  line.ok("Claude", `Claude Code ${claudeVersion} · ${oauth ? `signed in via ${c.bold("$" + oauth.name)}` : hasLogin ? "signed in (local login)" : "login not detected yet"} · ${c.muted("uses your subscription")}`);
-  add({ id: "claude.detect", label: "Claude", status: "ok", summary: `Claude Code ${claudeVersion}, ${oauth ? `token from $${oauth.name}` : "local login"}` });
-
-  // Verify the existing account before asking for repositories or integrations.
-  const cp = await spin("Claude", "sending one tiny prompt to read your usage window", () =>
-    runClaude({ prompt: "Reply with the single word ok.", cwd: home, model: "haiku", maxTurns: 1, tools: [], env: oauth ? { CLAUDE_CODE_OAUTH_TOKEN: oauth.value } : {} }),
+  const candidates = flags.provider ? [flags.provider] : ["claude", "codex"] as const;
+  const detected = await Promise.all(candidates.map(async (provider) => ({ provider, readiness: await checkProvider(provider, async () => provider === "claude" && oauth ? { CLAUDE_CODE_OAUTH_TOKEN: oauth.value } : {}) })));
+  const selected = detected.find((d) => d.readiness.authenticated) ?? detected.find((d) => d.readiness.available);
+  if (!selected) { line.err("AI account", "Install Claude Code or Codex CLI and sign in, then rerun init."); return 1; }
+  const provider = selected.provider;
+  const agentName = provider === "codex" ? "Codex" : "Claude";
+  const authKind = provider === "codex" ? "codex_login" : oauth ? "claude_oauth_token" : "claude_login";
+  line.ok(agentName, selected.readiness.detail);
+  add({ id: "claude.detect", label: agentName, status: "ok", summary: selected.readiness.detail });
+  const cp = await spin(agentName, "checking your existing account and usage window", () =>
+    runAgent(provider, { prompt: "Reply with the single word ok.", cwd: home, model: provider === "codex" ? "" : "haiku", maxTurns: 1, tools: [], env: provider === "claude" && oauth ? { CLAUDE_CODE_OAUTH_TOKEN: oauth.value } : {} }),
   );
   const rl: RateLimitReading | undefined = cp.rateLimits.at(-1);
   if (!cp.ok) {
-    line.err("Claude", `${cp.error ?? "no answer"} · run \`claude\` once to sign in, then rerun init`);
+    line.err(agentName, `${cp.error ?? "no answer"} · sign in to ${agentName}, then rerun init`);
     return 1;
   }
   const windowLine = rl?.fiveHourPct !== undefined ? `window ${rl.fiveHourPct}% used · resets ${hhmm(rl.fiveHourResetsAt)} · 30% always kept for you` : "window usage not reported by this CLI: the radar will admit one small step at a time";
-  line.ok("Claude", `answered in ${(cp.durationMs / 1000).toFixed(1)}s · ${windowLine}`);
-  add({ id: "claude.probe", label: "Claude", status: "ok", summary: `Answered in ${(cp.durationMs / 1000).toFixed(1)}s`, detail: windowLine });
+  line.ok(agentName, `answered in ${(cp.durationMs / 1000).toFixed(1)}s · ${windowLine}`);
+  add({ id: "claude.probe", label: agentName, status: "ok", summary: `Answered in ${(cp.durationMs / 1000).toFixed(1)}s`, detail: windowLine });
   mark("probe_claude");
 
   // Repos: the checkout we were started in is the default; more can be added. Each must be a git checkout.
@@ -556,7 +545,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
   const config = {
     version: 1,
     ...(port !== 4747 ? { server: { port } } : {}),
-    auth: { sources: [authKind === "claude_oauth_token" ? { id: "sub", kind: "claude_oauth_token", token: "${CLAUDE_CODE_OAUTH_TOKEN}" } : { id: "sub", kind: "claude_login" }] },
+    auth: { sources: [authKind === "codex_login" ? { id: "sub-codex", kind: "codex_login" } : authKind === "claude_oauth_token" ? { id: "sub", kind: "claude_oauth_token", token: "${CLAUDE_CODE_OAUTH_TOKEN}" } : { id: "sub", kind: "claude_login" }] },
     governor: { humanReservePct: 30 },
     pipelines,
     ...(repos.length ? { repos } : {}),

@@ -41,6 +41,7 @@ export const PipelineSchema = z
     minUsersAffected: z.number().int().min(0).max(1000).default(2).describe("Seeds the floor knob of this pipeline's admission brief on its first boot; from then on the brief (editable in Config > Instructions) is in force. 0 = no floor"),
     maxFindingsPerPass: z.number().int().min(1).max(20).default(5).describe("At most this many tickets per pass (twice as many clusters are investigated)"),
     models: z.partialRecord(z.enum(PIPELINE_MODEL_STAGES), modelId).default({}).describe("Per-stage model overrides; a missing stage uses the global models block"),
+    codexModels: z.partialRecord(z.enum(PIPELINE_MODEL_STAGES), modelId).optional().describe("Codex stage overrides; omitted stages inherit the workspace Codex models"),
     features: z.object({ validationGate: z.boolean().optional().describe("Overrides features.validationGate for this pipeline's tickets") }).default({}),
     gates: z
       .object({ minEvidence: z.number().int().min(1).max(6).default(2).describe("Evidence items a finding must cite (each re-found verbatim)") })

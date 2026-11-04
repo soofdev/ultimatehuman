@@ -479,7 +479,7 @@
 .chat-permission .permission-before { background: #fff4f1; margin-bottom: 8px; }
 .chat-permission-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .conversation-chat .md pre code { padding: 0; border: 0; background: transparent; }
-.chat-model-control { position: relative; min-width: 0; }
+.chat-model-control { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .chat-model-select { position: relative; display: flex; align-items: center; gap: 5px; border-radius: 6px; color: #536847; padding-left: 8px; }
 .chat-model-select:hover { background: #f0f4e9; }
 .chat-model-select select { appearance: none; border: 0; background: transparent; color: inherit; font-family: inherit; font-size: 11px; line-height: 1.5; padding: 7px 23px 7px 2px; max-width: 205px; cursor: pointer; outline-offset: 0; }

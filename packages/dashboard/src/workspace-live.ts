@@ -59,7 +59,7 @@ export function workspaceLive(data: any, pipelines: any[], project: string, offl
       !data.workspace.provider.authenticated ? data.workspace.provider.detail :
         missingSources.length ? `Read access needed: ${missingSources.join(", ")}` : last?.phase === "failed" ? last.error || "Last investigation failed. Inspect its steps." : "";
     if (!detail) continue;
-    const kind = unavailable.length ? "Repository access" : !data.workspace.provider.authenticated ? "Claude account" : missingSources.length ? "Source access" : "Failed run";
+    const kind = unavailable.length ? "Repository access" : !data.workspace.provider.authenticated ? "AI account" : missingSources.length ? "Source access" : "Failed run";
     const href = `#blocker-${p.id}`;
     blocked.push({ id: p.id, name: p.name, detail, href, kind });
     tickets.push({ key: `BLOCKER-${p.id}`, displayKey: kind, title: `${p.name} · ${kind}`, live_stage: "manual", live_href: href, live_state: { turn: "you", status: detail } });

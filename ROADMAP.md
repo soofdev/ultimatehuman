@@ -120,9 +120,13 @@ Compare it daily, for 14 days, against the issues that team actually confirmed.
 
 ## v2 (not scheduled)
 
-- **Codex CLI (planned):** reuse an installed Codex login as another runner for chat and investigations. Preserve approval controls and read-only pipeline access; verify login detection, model selection, usage-limit handling, and a complete real run before advertising support.
+
 - **Fixes:** auto-fix PRs from a read-only clone.
 - **Environment work:** the environment smoke probe, plus a hostile-exam QA executor driven by `environments[]` + playbooks, with screenshot evidence on the PR.
 - **Embedding:** the React embed kit.
 - **Hosting:** Railway/Render templates.
 - **Notifications:** a notifier interface (Slack, Telegram, email digests).
+
+## Codex provider
+
+Chat and pipeline investigations can use an existing Codex CLI ChatGPT login. The provider selector preserves separate models and sessions, shared conversation history, usage reserves, in-chat approvals, and read-only pipeline access. `node scripts/codex-check.mjs` checks the installer, provider switching, approvals, failures, and a complete pipeline with a local app-server fixture.

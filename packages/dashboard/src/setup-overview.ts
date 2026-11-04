@@ -28,10 +28,10 @@ export function setupOverview(data: any, projectId: string) {
   const ask = (message: string) => chatLink(message + scope + ".");
   const bug = pipelines.find((p) => p.template === "bug-radar");
   const preferredSource = sources.find((s) => bug?.sources.includes(s.id) && !connected(s)) ?? tracked.find(connected) ?? tracked[0] ?? available[0];
-  let next = { title: "Connect your first project", detail: "Tell Claude which repositories belong to it.", label: "Choose repositories", href: ask("Help me connect my repositories") };
+  let next = { title: "Connect your first project", detail: "Tell the assistant which repositories belong to it.", label: "Choose repositories", href: ask("Help me connect my repositories") };
   if (project) {
     if (!repositoriesReady) next = { title: "Reconnect a repository", detail: "One of this project’s checkouts is unavailable.", label: "Resolve in chat", href: ask("Help me restore access to the unavailable repository") };
-    else if (!accountReady) next = { title: "Check the Claude connection", detail: "Use the account already installed on this machine.", label: "Check in chat", href: ask("Check my existing Claude Code account connection") };
+    else if (!accountReady) next = { title: "Check the AI account connection", detail: "Use the account already installed on this machine.", label: "Check in chat", href: ask("Check my selected AI account connection") };
     else if (active || queued) next = { title: active?.phase === "parked" ? "Investigation is waiting" : queued ? "Investigation is queued" : "Your pipeline is running", detail: "Follow the investigation and its evidence as it progresses.", label: "Open Pipeline live", href: liveHref };
     else if ((bug && !ready(bug)) || (!pipelineReady && preferredSource && !connected(preferredSource))) next = { title: preferredSource ? `Connect ${preferredSource.name}` : "Connect an error source", detail: "Give Bug radar access to real errors for its next run.", label: "Continue in chat", href: ask(preferredSource ? `Connect ${preferredSource.name} and run the existing Bug radar, or set up the original Bug radar if none exists` : "Help me connect a tracking source and run Bug radar") };
     else if (completed) next = { title: "Your first investigation is complete", detail: completed.findings ? `The completed run produced ${completed.findings} finding${completed.findings === 1 ? "" : "s"}.` : "The run completed without a supported finding. You can inspect its coverage.", label: completed.findings ? "Open Review" : "View run", href: completed.findings ? `/review?tab=decide&pipeline=${encodeURIComponent(completed.pipelineId)}` : liveHref };
@@ -42,7 +42,7 @@ export function setupOverview(data: any, projectId: string) {
   }
   const steps = [
     { id: "repos", label: "Repositories", done: repositoriesReady, detail: !repos.length ? "Not connected" : repositoriesReady ? `${repos.length} connected` : "Access needed" },
-    { id: "account", label: "Claude Code", done: accountReady, detail: accountReady ? "Account connected" : "Check connection" },
+    { id: "account", label: data.workspace.provider.label || "AI account", done: accountReady, detail: accountReady ? "Account connected" : "Check connection" },
     { id: "pipeline", label: "Pipeline", done: pipelineReady, detail: pipelineReady ? "Ready to run" : pipelines.length ? "Connection needed" : "Not set up" },
     { id: "run", label: "First run", done: !!completed, detail: completed ? "Completed" : active?.phase === "parked" ? "Waiting for capacity" : active ? "Running" : queued ? "Queued" : runs[0]?.phase === "failed" ? "Needs attention" : "Not started" },
   ];
@@ -53,7 +53,7 @@ export function setupOverview(data: any, projectId: string) {
     const existingReady = existing.some(ready);
     const recommended = tracked.length || available.length ? !code : code;
     return { ...template, existing, recommended, ready: existing.length ? existingReady : templateReady,
-      status: existing.length ? existingReady ? existing.every((p) => !p.enabled) ? "Paused" : "Configured" : "Connection needed" : templateReady ? "Ready to add" : !repositoriesReady ? "Needs repositories" : !accountReady ? "Needs Claude" : "Needs tracking",
+      status: existing.length ? existingReady ? existing.every((p) => !p.enabled) ? "Paused" : "Configured" : "Connection needed" : templateReady ? "Ready to add" : !repositoriesReady ? "Needs repositories" : !accountReady ? "Needs AI account" : "Needs tracking",
       description: code ? "Find exposed secrets, risky dependencies, and gaps in authentication." : "Trace production errors and failed interactions back to the code.",
       href: ask(existing.length ? `Check the setup of the existing ${template.name} pipeline${existing.length === 1 ? " " + JSON.stringify(existing[0].id) : "s"} and help me run it, preserving its saved settings` : `Help me set up ${template.name} using the original template defaults, then run it`),
     };

@@ -36,6 +36,7 @@ jobs:
       - run: pnpm release:prepare
       - run: node scripts/workspace-check.mjs
       - run: node scripts/chat-check.mjs
+      - run: node scripts/codex-check.mjs
       - run: pnpm exec esbuild scripts/datadog-mapping-check.ts --bundle --platform=node --format=esm --outfile=/tmp/ultimatehuman-datadog-check.mjs
       - run: node /tmp/ultimatehuman-datadog-check.mjs
       - run: pnpm release:check

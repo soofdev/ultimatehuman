@@ -6,7 +6,9 @@ import type { Finding, Evidence, Plugin, PluginContext, Signal, SourcePlugin, Se
 import type { Config } from "../config/schema";
 import type { Store } from "../store/store";
 import type { WindowTracker } from "../governor/tracker";
-import { runClaude, extractJson, type ClaudeRunResult } from "../runner/claude";
+import { extractJson, type ClaudeRunResult } from "../runner/claude";
+import { runAgent, providerFor } from "../runner/provider";
+import { readCodexLimits } from "../runner/codex";
 import { readOnlyHttp } from "../plugins/http";
 import { redact, hashUser } from "./redact";
 import { DraftSchema, ReviewSchema, ProposalsSchema, rootCausePrompt, adversarialPrompt, retrospectivePrompt, type Draft, type Review, type CodeContext, type TeamBriefs, type PassFrame } from "./prompts";
@@ -67,6 +69,8 @@ export class PassExecutor {
     const from = new Date(to.getTime() - hours * 3600_000);
     const run: RunRecord = {
       id: `run_${to.toISOString().replace(/[-:T]/g, "").slice(0, 14)}_${randomBytes(2).toString("hex")}`,
+      provider: providerFor(cfg),
+      authSource: cfg.auth.sources[0]!.id,
       pipelineId: p.id,
       pipelineName: p.name,
       trigger,
@@ -377,16 +381,20 @@ export class PassExecutor {
   private async agent(run: RunRecord, s: StepEntry, kind: AgentKind, prompt: string, cwd: string, resumeSessionId?: string): Promise<ClaudeRunResult | null> {
     const cfg = this.d.getConfig();
     const tr = this.d.tracker;
+    const provider = providerFor(cfg);
+    if ((run.provider ?? "claude") !== provider || (run.authSource && run.authSource !== cfg.auth.sources[0]?.id))
+      throw new Error(`This run belongs to ${run.provider ?? "claude"}. Reconnect its original account and start a new run.`);
     if (tr.isStale(cfg.governor.staleAfterMin)) {
-      const probe = await runClaude({ prompt: "Reply with the single word ok.", cwd, model: "haiku", maxTurns: 1, env: await this.d.runnerEnv(), tools: [] });
-      for (const r of probe.rateLimits) tr.ingest(r, run.id);
+      const env = await this.d.runnerEnv();
+      const readings = provider === "codex" ? await readCodexLimits(cwd, env) : (await runAgent(provider, { prompt: "Reply with the single word ok.", cwd, model: "haiku", maxTurns: 1, env, tools: [] })).rateLimits;
+      for (const r of readings) tr.ingest(r, run.id);
       this.d.emit({ type: "window.updated", window: tr.status() });
     }
     const adm = tr.admit(kind);
     if (!adm.admit) {
       const why =
         adm.reason === "window_exhausted"
-          ? `the account's ${(adm.limit ?? "usage").replace("_", "-")} limit is reached (Claude rejects new requests)`
+          ? `the account's ${(adm.limit ?? "usage").replace("_", "-")} limit is reached (the AI account rejects new requests)`
           : `window ${adm.usedPct}% used + ~${adm.estimatePct}% for this step > ${adm.ceilingPct}% ceiling (your ${100 - adm.ceilingPct}% reserve)`;
       // The retrospective is optional: it is skipped, never parked, so a finished pass never waits on it.
       if (kind === "retrospective") this.endStep(run, s, "parked", `${why}; skipped for this pass`);
@@ -396,7 +404,7 @@ export class PassExecutor {
     const before = tr.reading()?.fiveHourPct;
     const model = this.d.model ?? modelFor(cfg, this.d.registry.get(pipelineOfRun(run)), STAGE_OF[kind]);
     s.model = model;
-    const res = await runClaude({
+    const res = await runAgent(provider, {
       prompt,
       cwd,
       model,
@@ -408,6 +416,7 @@ export class PassExecutor {
     });
     for (const r of res.rateLimits) tr.ingest(r, run.id);
     const after = tr.reading()?.fiveHourPct;
+    if (res.model) s.model = res.model;
     s.costUsd = res.costUsd;
     run.costUsd += res.costUsd;
     this.d.store.addUsage(tr.status().authSource, "step", run.id, {

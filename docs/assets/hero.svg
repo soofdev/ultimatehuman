@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="625" viewBox="0 0 1200 625" role="img" aria-labelledby="title desc">
   <title id="title">ultimatehuman — Multiply your productivity by 80×. No AI slop. By design.</title>
-  <desc id="desc">The founder reports about 100 tickets reviewed in 5 hours. The 80× comparison uses 80 estimated workdays versus one day of human review in the founding workflow, not a benchmark of this release. The full workflow's rule: AI must prove its work succeeded before it asks for your attention. Runs on your existing Claude Code CLI subscription, with no extra AI spend within its included usage. Codex CLI support is planned, not implemented. API billing, provider extra usage, commercial licenses, and third-party services are separate. The current release provides investigation and human review; fixes and browser proof are future stages.</desc>
+  <desc id="desc">The founder reports about 100 tickets reviewed in 5 hours. The 80× comparison uses 80 estimated workdays versus one day of human review in the founding workflow, not a benchmark of this release. The full workflow's rule: AI must prove its work succeeded before it asks for your attention. Runs on your existing Claude Code or Codex CLI subscription, with no extra AI spend within its included usage. API billing, provider extra usage, commercial licenses, and third-party services are separate. The current release provides investigation and human review; fixes and browser proof are future stages.</desc>
   <rect width="1200" height="625" rx="20" fill="#101712"/>
   <g font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">
     <rect x="44" y="36" width="36" height="36" rx="10" fill="#d3ff5f"/>
@@ -20,7 +20,7 @@
     <text x="46" y="382" fill="#d3ff5f" font-size="23" font-weight="600">AI must prove its work succeeded before it asks for your attention.</text>
     <rect x="44" y="411" width="1112" height="49" rx="6" fill="#d3ff5f"/>
     <text x="66" y="442" fill="#101712" font-size="20" font-weight="750" letter-spacing=".5">AI CANNOT APPROVE ITS OWN WORK.</text>
-    <text x="46" y="502" fill="#f6f7f2" font-size="24" font-weight="650">Your Claude Code CLI. Your existing subscription.</text>
+    <text x="46" y="502" fill="#f6f7f2" font-size="24" font-weight="650">Claude Code or Codex CLI. Your existing subscription.</text>
     <text x="46" y="536" fill="#d3ff5f" font-size="23" font-weight="650">$0 extra AI spend within your plan's included usage.</text>
     <rect x="860" y="481" width="296" height="58" rx="6" fill="#1b281e" stroke="#344437"/>
     <text x="1008" y="516" text-anchor="middle" fill="#bac6b9" font-size="15" font-weight="600" letter-spacing="1">CODEX CLI · PLANNED</text>

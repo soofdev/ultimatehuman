@@ -13,7 +13,8 @@ import { instantiate, templateById } from "../pipelines/registry";
 import { publicRun } from "../pass/executor";
 import { readOnlyHttp } from "../plugins/http";
 import { setEngineEnv } from "../envfile";
-import { checkClaudeProvider, type ProviderReadiness } from "./provider";
+import { checkProvider, type ProviderReadiness } from "./provider";
+import { providerFor, agentModel } from "../runner/provider";
 
 export interface ServiceControl {
   installed(): boolean;
@@ -61,12 +62,14 @@ export function workspaceRoutes(d: Deps): Record<string, Route> {
   };
   let providerCheck: Promise<ProviderReadiness> | undefined;
   let providerCheckedAt = 0;
+  let providerSource = "";
   const provider = (refresh = false, verify = false) => {
-    if (refresh || Date.now() - providerCheckedAt > 10_000) providerCheck = undefined;
+    const sourceKey = JSON.stringify(d.config().auth.sources[0]);
+    if (refresh || providerSource !== sourceKey || Date.now() - providerCheckedAt > 10_000) providerCheck = undefined;
     if (!providerCheck) {
+      providerSource = sourceKey;
       providerCheckedAt = Date.now();
-      providerCheck = checkClaudeProvider(d.runnerEnv, verify ? d.home : undefined).then((result) => {
-        const sourceKey = JSON.stringify(d.config().auth.sources[0]);
+      providerCheck = checkProvider(providerFor(d.config()), d.runnerEnv, verify ? d.home : undefined).then((result) => {
         const previous = d.store.getKv<{ sourceKey: string; result: ProviderReadiness }>("workspace.provider.diagnostic");
         if (verify || result.authenticated) d.store.setKv("workspace.provider.diagnostic", { sourceKey, result });
         if (!verify && !result.authenticated && previous?.sourceKey === sourceKey && previous.result.reason === "expired") return previous.result;
@@ -107,7 +110,7 @@ export function workspaceRoutes(d: Deps): Record<string, Route> {
     const maxFindings = existing?.maxFindingsPerPass ?? t.pipeline.maxFindingsPerPass;
     checks.push({ id: "boundaries", label: "Investigation boundaries", ready: true, required: true,
       detail: `Read-only code access · up to ${maxFindings} findings per pass · ${d.config().governor.humanReservePct}% account capacity reserved for you. ${existing ? `Saved schedule: ${existing.schedule}; ${existing.enabled ? "enabled" : "paused"}.` : `Template schedule: ${t.pipeline.schedule}; ${t.pipeline.enabled ? "enabled" : "paused"}.`} Existing pipeline settings are preserved.` });
-    return { project, template, name: t.name, sources, model: existing?.models?.radar ?? d.config().models.radar, checkedAt: stamp(), checks, ready: checks.every((c) => !c.required || c.ready) };
+    return { project, template, name: t.name, sources, model: agentModel(d.config(), "radar", existing) || "Codex default", checkedAt: stamp(), checks, ready: checks.every((c) => !c.required || c.ready) };
   };
   const routes: Record<string, Route> = {
     "POST /api/workspace/provider/check": async () => ({ json: { provider: await provider(true, true) } }),
