@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { claudeBin, claudeEnv, runClaude } from "../runner/claude";
+import { codexBin, codexEnv, withCodex, runCodex } from "../runner/codex";
+import type { AgentProvider } from "../runner/provider";
+import { homedir } from "node:os";
 
 const exec = promisify(execFile);
 export interface ProviderReadiness {
@@ -15,6 +18,27 @@ export interface ProviderReadiness {
   cliPath?: string;
   configDirectory?: string;
   authMethod?: string;
+}
+
+export const checkProvider = (provider: AgentProvider, env: () => Promise<Record<string, string>>, verifyIn?: string) =>
+  provider === "codex" ? checkCodexProvider(env, verifyIn) : checkClaudeProvider(env, verifyIn);
+
+export async function checkCodexProvider(runnerEnv: () => Promise<Record<string, string>>, verifyIn?: string): Promise<ProviderReadiness> {
+  const base = { label: "Codex", cliPath: codexBin(), command: "codex login", authMethod: "Local Codex ChatGPT login" };
+  let cliVersion: string;
+  try { cliVersion = (await exec(codexBin(), ["--version"], { timeout: 5000, env: codexEnv() })).stdout.trim(); }
+  catch { return { ...base, available: false, authenticated: false, reason: "unavailable", detail: "Install Codex CLI on this machine, then sign in with ChatGPT." }; }
+  try {
+    const env = await runnerEnv();
+    const account = await withCodex(verifyIn ?? homedir(), env, (client) => client.request("account/read", { refreshToken: false }));
+    if (account.account?.type !== "chatgpt") return { ...base, cliVersion, available: true, authenticated: false, reason: "login", detail: "Sign in to Codex with ChatGPT to use your subscription. An API-key login is not used by this connection." };
+    if (verifyIn) {
+      const probe = await runCodex({ prompt: "Reply with the single word ok. Do not use tools.", cwd: verifyIn, model: "", maxTurns: 1, tools: [], env, timeoutMs: 45_000 });
+      if (!probe.ok && !probe.limitHit) return { ...base, cliVersion, available: true, authenticated: false, reason: "unverified", detail: "Codex is signed in but could not complete the connection check. Check its model access or retry." };
+      return { ...base, cliVersion, available: true, authenticated: true, verifiedAt: new Date().toISOString(), detail: probe.limitHit ? "Codex account detected. Its usage limit is currently reached." : "Your existing Codex account responded successfully. This workspace reuses that account." };
+    }
+    return { ...base, cliVersion, available: true, authenticated: true, detail: "Your existing Codex ChatGPT login is connected." };
+  } catch { return { ...base, cliVersion, available: true, authenticated: false, reason: "unverified", detail: "Could not check the Codex account. Open Codex on this machine, then retry." }; }
 }
 
 /** Checks the runner's account; an explicit verifyIn requests one tiny live AI call. */

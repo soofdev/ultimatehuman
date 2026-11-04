@@ -1,6 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import type { Config } from "../config/schema";
+import { codexBin } from "../runner/codex";
+import { providerFor, providerLabel } from "../runner/provider";
 import { claudeBin } from "../runner/claude";
 
 /**
@@ -50,7 +52,7 @@ export function gradeSetup(cfg: Config, raw: Record<string, any>, p: GradeProbes
   const checks: GradeCheck[] = [
     { id: "repos", tier: "bronze", label: "At least one repo configured and on disk", ok: repos.length > 0 && repos.every((r) => p.reposPresent.includes(r.name)), hint: repos.length ? `Fix the path of: ${repos.filter((r) => !p.reposPresent.includes(r.name)).map((r) => r.name).join(", ")}` : "Add a repo to `repos` in the config (name + local path)." },
     { id: "pipelines", tier: "bronze", label: "At least one pipeline enabled", ok: (cfg.pipelines ?? []).some((x) => x.enabled), hint: "Add a pipeline from a template in Config > Pipelines (or ask the chat), or enable one." },
-    { id: "claude", tier: "bronze", label: "claude CLI found on this machine", ok: p.claudeCli, hint: "Install Claude Code and log in (`claude`), or set ULTIMATEHUMAN_CLAUDE_BIN." },
+    { id: "claude", tier: "bronze", label: `${providerLabel(providerFor(cfg))} CLI found on this machine`, ok: p.claudeCli, hint: "Install and sign in to your selected AI CLI." },
     { id: "sources", tier: "silver", label: "An error tracker or analytics source connected", ok: p.sources.length > 0, hint: "Connect Sentry, PostHog or Datadog with a read-only key (`ultimatehuman init`, or ask the chat what is pending)." },
     { id: "notifications", tier: "silver", label: "Notifications or Telegram chat on", ok: !!tg?.enabled || !!(chatTg?.enabled && chatTg.botToken), hint: "Set notifications.telegram.enabled = true (bot token as a ${ENV_VAR} ref + chat id), or chat.telegram.enabled = true with a botToken ${ENV_VAR} ref (enabled defaults to false)." },
     { id: "guard", tier: "silver", label: "Usage guard on (window reserve or API daily cap)", ok: cfg.governor.humanReservePct > 0 || hasKeyCap, hint: "Set governor.humanReservePct above 0 (default 30)." },
@@ -73,7 +75,7 @@ export function gradeSetup(cfg: Config, raw: Record<string, any>, p: GradeProbes
 /** The cheap live probes: file-system checks only, no network, no agent. `sourceIds` = plugin ids of kind source. */
 export function gradeProbes(cfg: Config, sourceIds: readonly string[] = []): GradeProbes {
   const isDir = (p: string) => existsSync(p) && statSync(p).isDirectory();
-  const bin = claudeBin();
+  const bin = providerFor(cfg) === "codex" ? codexBin() : claudeBin();
   const claudeCli = bin.includes("/") ? existsSync(bin) : (process.env.PATH ?? "").split(delimiter).some((d) => d && existsSync(join(d, bin)));
   const present = (cfg.repos ?? []).filter((r) => isDir(r.path));
   return {

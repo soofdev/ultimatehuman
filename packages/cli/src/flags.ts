@@ -4,6 +4,7 @@ export interface GlobalFlags {
   fix: boolean;
   noOpen?: boolean;
   advanced?: boolean;
+  provider?: "claude" | "codex";
   /** PostHog project id to watch (skips the picker). */
   project?: string;
   /** GitHub repo owner/name for issues (skips the question). */

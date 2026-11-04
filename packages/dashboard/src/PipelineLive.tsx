@@ -64,18 +64,18 @@ export default function PipelineLive({ data, pipelines, project, offline, act, c
     {blockerId && <Modal title={blocker ? `${blocker.kind} · ${blocker.name}` : "Access verified"} close={() => setBlockerId("")}>
       <div className="uh-live-blocker-detail">
         <p>{blocker?.detail || "The account check succeeded. Your pipeline is ready to run with its saved settings."}</p>
-        {blocker?.kind === "Claude account" && <>
-          <dl><dt>Claude Code</dt><dd>{provider.available ? "Installed" : "Not found"}{provider.cliVersion ? ` · ${provider.cliVersion}` : ""}</dd><dt>Account source</dt><dd>{provider.authMethod || "Local Claude login"}</dd>{provider.configDirectory && <><dt>Claude configuration</dt><dd><code>{provider.configDirectory}</code></dd></>}{provider.verifiedAt && <><dt>Last live check</dt><dd>{when(provider.verifiedAt)}</dd></>}</dl>
+        {blocker?.kind === "AI account" && <>
+          <dl><dt>{provider.label || "AI CLI"}</dt><dd>{provider.available ? "Installed" : "Not found"}{provider.cliVersion ? ` · ${provider.cliVersion}` : ""}</dd><dt>Account source</dt><dd>{provider.authMethod || "Local CLI login"}</dd>{provider.configDirectory && <><dt>CLI configuration</dt><dd><code>{provider.configDirectory}</code></dd></>}{provider.verifiedAt && <><dt>Last live check</dt><dd>{when(provider.verifiedAt)}</dd></>}</dl>
 
           {provider.command && <div className="uh-activation-command"><code>{provider.command}</code><button className="uh-btn" onClick={() => navigator.clipboard.writeText(provider.command).catch(() => setError("Copy the command into your terminal."))}>Copy command</button></div>}
         </>}
         {error && <p role="alert" className="uh-error">{error}</p>}
         <div className="uh-modal-actions">
           <button className="uh-btn" onClick={() => setBlockerId("")}>Close</button>
-          {blocker?.kind === "Claude account" ? <button className="uh-btn primary" disabled={checking} onClick={async () => {
+          {blocker?.kind === "AI account" ? <button className="uh-btn primary" disabled={checking} onClick={async () => {
             setChecking(true); setError("");
             try { await act("/api/workspace/provider/check", {}); } catch (e) { setError((e as Error).message); } finally { setChecking(false); }
-          }}>{checking ? "Checking Claude access…" : "Check Claude access"}</button> : blocker?.kind === "Source access" ? <a className="uh-btn primary" href={chatFirst ? "/chat" : "/settings?tab=connections"}>Manage source connection</a> : blocker?.kind === "Failed run" ? <a className="uh-btn primary" onClick={() => setBlockerId("")} href={`#run-${snapshot.runs.find((r: any) => r.pipelineId === blocker.id)?.id}`}>Inspect run</a> : null}
+          }}>{checking ? "Checking account access…" : "Check account access"}</button> : blocker?.kind === "Source access" ? <a className="uh-btn primary" href={chatFirst ? "/chat" : "/settings?tab=connections"}>Manage source connection</a> : blocker?.kind === "Failed run" ? <a className="uh-btn primary" onClick={() => setBlockerId("")} href={`#run-${snapshot.runs.find((r: any) => r.pipelineId === blocker.id)?.id}`}>Inspect run</a> : null}
         </div>
       </div>
     </Modal>}

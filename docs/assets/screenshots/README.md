@@ -1,6 +1,6 @@
 # Documentation screenshots
 
-These images use fictional Acme repositories, sample messages, findings, and run states. They contain no customer projects, credentials, or production data.
+The Acme images use fictional repositories, sample messages, findings, and run states. The Codex images show a live local integration test with a disposable repository. None contain customer projects, credentials, or production data.
 
 | File | Content | Capture |
 | --- | --- | --- |
@@ -10,6 +10,12 @@ These images use fictional Acme repositories, sample messages, findings, and run
 | `review-evidence.png` | The first attachment in the full-screen viewer | Opened through the original Review thumbnail |
 | `checkout-failure.png` | A valid ZIP code rejected at checkout | Browser capture of a local demo form |
 | `checkout-request.png` | The request and validation error | Browser capture of the demo's recorded request |
+| `codex-chat.png` | Codex provider and native model selector | Local `0.1.4` build, real Codex CLI login, desktop Chrome |
+| `codex-chat-mobile.png` | The same controls on mobile | Same workspace, Chrome at 390 × 844 |
+
+## Codex integration capture
+
+The Codex captures use a real signed-in Codex CLI (`0.154.0`) and its native model catalog. The browser model selector was changed and its saved value checked through the engine API. A read-only security investigation of the disposable repository completed through Codex; it withheld a finding because the sample server was explicitly documented as an undeployed fixture. No production tracker was used. A separate disposable-file test verified that interactive shell changes request approval before execution.
 
 ## Review example
 

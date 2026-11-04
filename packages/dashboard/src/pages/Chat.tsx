@@ -73,6 +73,8 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
   const [permissions, setPermissions] = useState<any[]>([]);
   const [deciding, setDeciding] = useState("");
   const [accountKind, setAccountKind] = useState("subscription");
+  const [provider, setProvider] = useState("claude");
+  const agentName = provider === "codex" ? "Codex" : "Claude";
   const [model, setModel] = useState("claude-opus-5-5");
   const seenRequests = useRef(new Set<string>());
   const [files, setFiles] = useState<{ file: File; url: string }[]>([]);
@@ -90,11 +92,12 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
     const r = await get("/api/chat");
     setMsgs(r.messages);
     setBusy(r.busy);
-    setActivity(r.activity || "Claude is working…");
+    setActivity(r.activity || `${r.provider === "codex" ? "Codex" : "Claude"} is working…`);
     setRequests(r.connections || []);
     setPermissions(r.permissions || []);
     setAccountKind(r.accountKind || "subscription");
-    setModel(r.model || "claude-opus-5-5");
+    setProvider(r.provider || "claude");
+    setModel(r.model ?? "claude-opus-5-5");
   };
   const openConnection = (request: ConnectionRequest, key = "") => {
     seenRequests.current.add(request.id);
@@ -204,7 +207,7 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
             <Cable size={20} /><div><strong>Connect {r.source === "posthog" ? "PostHog" : "Datadog"}</strong><p>Use your existing {r.source === "posthog" ? "events and errors" : "error logs"}{r.project ? ` for ${r.project}` : ""}.</p></div><button className="uh-btn primary" onClick={() => openConnection(r)}>Connect <ArrowUpRight size={14} /></button>
           </div>)}
           {permissions.map((p) => <div className="chat-permission" key={p.id} data-chat-permission={p.tool}>
-            <div><Terminal size={17} /><strong>{p.tool === "Bash" ? "Run this command?" : `Allow Claude to ${p.tool === "Edit" ? "edit this file" : p.tool === "Write" ? "write this file" : "use " + p.tool}?`}</strong></div>
+            <div><Terminal size={17} /><strong>{p.tool === "Bash" ? "Run this command?" : `Allow ${agentName} to ${p.tool === "Edit" ? "edit this file" : p.tool === "Write" ? "write this file" : "use " + p.tool}?`}</strong></div>
             {p.input.description && <p>{p.input.description}</p>}
             <pre>{p.tool === "Bash" ? p.input.command : p.input.file_path || p.input.path || JSON.stringify(p.input, null, 2)}</pre>
             {(p.input.new_string !== undefined || p.input.content !== undefined) && <details><summary>View change</summary>{p.input.old_string && <pre className="permission-before">{p.input.old_string}</pre>}<pre>{p.input.new_string ?? p.input.content}</pre></details>}
@@ -244,11 +247,11 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
             <input ref={picker} type="file" accept="image/*" multiple hidden data-chat-file onChange={(e) => (attach(e.target.files), (e.target.value = ""))} />
             <textarea
               ref={composer}
-              aria-label="Message Claude"
+              aria-label={`Message ${agentName}`}
               data-chat-input
               rows={intro ? 2 : 1}
               value={text}
-              placeholder={intro ? configured ? "What should we investigate?" : "Repository paths or Git URLs…" : "Message Claude…"}
+              placeholder={intro ? configured ? "What should we investigate?" : "Repository paths or Git URLs…" : `Message ${agentName}…`}
               onChange={(e) => changeText(e.target.value)}
               onPaste={(e) => {
                 if (e.clipboardData.files.length) {
@@ -265,11 +268,11 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
             />
             <div className="chat-composer-bar">
               <button type="button" className="btn chat-attach" aria-label="Attach an image" title="Attach an image" onClick={() => picker.current?.click()} data-chat-attach><ImagePlus size={16} /><span>Add context</span></button>
-              <ChatModelPicker current={model} accountKind={accountKind} disabled={disabled} onChange={load} />
-              <button type="submit" className="btn primary chat-send" aria-label="Send message" title={disabled ? "Reconnect Claude to send" : "Send message"} disabled={disabled || (!text.trim() && !files.length)} data-chat-send><ArrowUp size={19} strokeWidth={2} /></button>
+              <ChatModelPicker current={model} provider={provider} accountKind={accountKind} disabled={busy > 0} onChange={load} />
+              <button type="submit" className="btn primary chat-send" aria-label="Send message" title={disabled ? `Reconnect ${agentName} to send` : "Send message"} disabled={disabled || (!text.trim() && !files.length)} data-chat-send><ArrowUp size={19} strokeWidth={2} /></button>
             </div>
           </div>
-          <div className="chat-composer-hint"><span>{accountKind === "api" ? "Your Claude API account" : "Your Claude Code subscription"}</span><span>Enter to send · Shift+Enter for a new line</span></div>
+          <div className="chat-composer-hint"><span>{provider === "codex" ? "Your Codex ChatGPT subscription" : accountKind === "api" ? "Your Claude API account" : "Your Claude Code subscription"}</span><span>Enter to send · Shift+Enter for a new line</span></div>
           {err && <p className="chat-err" role="alert">{err}</p>}
         </div>
       </form>

@@ -2,7 +2,7 @@
   "name": "ultimatehuman",
   "version": "0.0.0",
   "private": true,
-  "description": "No AI slop. Proof before human review. Runs on your existing Claude Code subscription, within its included usage. Read the founder's 80× productivity case.",
+  "description": "No AI slop. Proof before human review. Runs on your existing Claude Code or Codex subscription, within its included usage. Read the founder's 80× productivity case.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "packageManager": "pnpm@11.10.0",

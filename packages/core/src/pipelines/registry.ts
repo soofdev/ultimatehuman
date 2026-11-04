@@ -5,6 +5,7 @@ import { BRIEF_IDS, Instructions, withFloor, type BriefId } from "../instruction
 import { PipelineSchema, type PipelineConfig, type PipelineInput } from "./schema";
 import { TEMPLATES, type PipelineTemplate } from "./templates";
 import { BLANK_BRIEFS } from "./templates/blank";
+import { agentModel } from "../runner/provider";
 
 /**
  * Config -> pipelines. Instantiating a template COPIES it into a config entry; from then on the
@@ -46,7 +47,7 @@ export function seedBriefs(p: Pick<PipelineConfig, "briefs" | "template" | "minU
 
 /** Model a stage runs on for this pipeline: its override, else the global models block. */
 export function modelFor(cfg: Config, p: PipelineConfig | undefined, stage: "radar" | "review" | "retrospective"): string {
-  return p?.models?.[stage] ?? cfg.models[stage];
+  return agentModel(cfg, stage, p);
 }
 
 export function validationGateFor(cfg: Config, p: PipelineConfig | undefined): boolean {

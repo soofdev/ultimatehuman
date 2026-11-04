@@ -27,8 +27,8 @@ export class WindowTracker {
 
   constructor(
     private readonly store: Store,
-    private readonly sourceId: string,
-    private readonly sourceKind: "subscription" | "api_key",
+    private sourceId: string,
+    private sourceKind: "subscription" | "api_key",
     private humanReservePct: number,
   ) {
     const saved = store.getKv<RateLimitReading>(`window:${sourceId}`);
@@ -49,6 +49,14 @@ export class WindowTracker {
     this.humanReservePct = percent;
   }
 
+  setSource(id: string, kind: "subscription" | "api_key"): void {
+    if (id === this.sourceId && kind === this.sourceKind) return;
+    this.sourceId = id; this.sourceKind = kind;
+    const saved = this.store.getKv<RateLimitReading>(`window:${id}`);
+    if (saved) this.latest.set(id, saved);
+    this.parkedUntil = null;
+  }
+
   isStale(staleAfterMin: number): boolean {
     const r = this.reading();
     return !r || Date.now() - Date.parse(r.observedAt) > staleAfterMin * 60_000;
@@ -57,7 +65,7 @@ export class WindowTracker {
   estimate(kind: string): number {
     const samples = this.store
       .listUsage("step", 200)
-      .filter((u) => u.data.kind === kind && typeof u.data.windowDeltaPct === "number" && u.data.windowDeltaPct >= 0)
+      .filter((u) => u.sourceId === this.sourceId && u.data.kind === kind && typeof u.data.windowDeltaPct === "number" && u.data.windowDeltaPct >= 0)
       .map((u) => u.data.windowDeltaPct as number)
       .sort((a, b) => a - b);
     if (samples.length < 5) return SEED_PCT[kind] ?? 1;

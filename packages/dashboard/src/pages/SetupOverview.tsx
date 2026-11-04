@@ -60,12 +60,12 @@ export default function SetupPage({ data, project: projectId }: { data: any; pro
               <p>{info.description}</p>
               {installed && <div className="setup-source-repos"><GitFork size={12} /><span>{detectedRepos.map((r) => r.name).join(" · ")}</span></div>}
               {connected ? <p className="setup-source-access"><Check size={12} />Workspace read access verified</p> : installed && <p className="setup-source-access">Read access not connected</p>}
-              <div className="setup-source-actions"><a href={ask(connected ? `Check ${source.name} project mapping and data coverage for my repositories` : installed ? `Connect the existing ${source.name} tracking using the in-chat connection form, then continue my first Bug radar` : `Help me add ${source.name} tracking to my repositories. Inspect the existing setup first and explain what needs to be installed`)}>{connected ? "Check coverage" : installed ? `Connect ${source.name}` : "Set up with Claude"}<ArrowRight size={13} /></a><a href={info.docs} target="_blank" rel="noreferrer" aria-label={`${source.name} documentation`} title="Official documentation"><ArrowUpRight size={14} /></a></div>
+              <div className="setup-source-actions"><a href={ask(connected ? `Check ${source.name} project mapping and data coverage for my repositories` : installed ? `Connect the existing ${source.name} tracking using the in-chat connection form, then continue my first Bug radar` : `Help me add ${source.name} tracking to my repositories. Inspect the existing setup first and explain what needs to be installed`)}>{connected ? "Check coverage" : installed ? `Connect ${source.name}` : "Set up in chat"}<ArrowRight size={13} /></a><a href={info.docs} target="_blank" rel="noreferrer" aria-label={`${source.name} documentation`} title="Official documentation"><ArrowUpRight size={14} /></a></div>
             </article>;
           })}
           {unsupported.length > 0 && <p className="setup-unsupported">{unsupported.map((id) => id === "sentry" ? "Sentry" : id).join(", ")} detected. Collection is not available in this build.</p>}
         </section>
-        <div className="setup-flow"><span className="setup-eyebrow">HOW IT WORKS</span><p>Signals <ArrowRight size={12} /> Investigation <ArrowRight size={12} /> Review</p><span>Claude checks the code and evidence. You decide which findings to act on.</span><a href={view.liveHref}>See Pipeline live<ArrowUpRight size={13} /></a></div>
+        <div className="setup-flow"><span className="setup-eyebrow">HOW IT WORKS</span><p>Signals <ArrowRight size={12} /> Investigation <ArrowRight size={12} /> Review</p><span>The AI checks the code and evidence. You decide which findings to act on.</span><a href={view.liveHref}>See Pipeline live<ArrowUpRight size={13} /></a></div>
       </aside>
     </div>
   </div>;

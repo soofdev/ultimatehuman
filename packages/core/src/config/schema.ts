@@ -22,6 +22,10 @@ export const SecretRef = z
 const AuthSourceSchema = z.discriminatedUnion("kind", [
   z.object({
     id: z.string(),
+    kind: z.literal("codex_login").describe("Reuse the Codex CLI ChatGPT login already on this machine"),
+  }),
+  z.object({
+    id: z.string(),
     kind: z.literal("claude_login").describe("Reuse the Claude Code login already on this machine"),
   }),
   z.object({
@@ -206,7 +210,9 @@ export const ConfigSchema = z
       .refine((ps) => new Set(ps.map((p) => p.id)).size === ps.length, "pipeline ids must be unique")
       .describe("The pipelines this install runs. Each is data: sources, signal types, its own briefs, schedule, overrides. Templates are suggestions copied in; edit, disable, delete or add freely."),
     features: FeaturesSchema.describe("Optional behaviour. Every flag defaults off; off = behaviour identical."),
-    models: ModelsSchema.describe("Model per leg type. Defaults to claude-opus-5-5 everywhere."),
+    models: ModelsSchema.describe("Claude model per leg type. Defaults to claude-opus-5-5 everywhere."),
+    codexModels: z.partialRecord(z.enum(MODEL_STAGES.map((s) => s.id)), z.string().regex(/^[A-Za-z0-9._\[\]-]+$/)).default({})
+      .describe("Codex model per leg. Omitted stages use the installed Codex CLI default; Claude choices are preserved separately."),
     repos: z.array(RepoSchema).default([])
       .describe("Local checkouts the agents read (and later fix) code in. Each repo keeps its own git/GitHub auth; nothing here is a credential."),
     plugins: z.record(z.string(), PluginInstanceSchema).default({}),

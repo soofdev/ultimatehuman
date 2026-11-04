@@ -2,12 +2,15 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { claudeBin, claudeEnv } from "./claude";
 import { DEFAULT_MODEL } from "../config/schema";
+import { readCodexModels } from "./codex";
+import type { AgentProvider } from "./provider";
 
 export interface ChatModel {
   id: string;
   label: string;
   description: string;
   aliases: string[];
+  isDefault?: boolean;
 }
 
 /** Use the installed CLI's catalog, including its account-specific aliases. */
@@ -69,14 +72,14 @@ export function readClaudeModels(cwd: string, env: Record<string, string>): Prom
 }
 
 /** Coalesce concurrent browser requests and avoid starting a CLI for each poll. */
-export function claudeModelCatalog(cwd: string, environment: () => Promise<Record<string, string>>) {
+export function claudeModelCatalog(cwd: string, environment: () => Promise<Record<string, string>>, provider: AgentProvider = "claude") {
   let cached: { models: ChatModel[]; at: number } | undefined;
   let pending: Promise<ChatModel[]> | undefined;
   return (refresh = false): Promise<ChatModel[]> => {
     if (pending) return pending;
     if (!refresh && cached && Date.now() - cached.at < 5 * 60_000) return Promise.resolve(cached.models);
     cached = undefined;
-    pending = environment().then((env) => readClaudeModels(cwd, env)).then((models) => {
+    pending = environment().then((env) => provider === "codex" ? readCodexModels(cwd, env) : readClaudeModels(cwd, env)).then((models) => {
       cached = { models, at: Date.now() };
       return models;
     }).finally(() => { pending = undefined; });

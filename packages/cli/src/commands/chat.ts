@@ -34,7 +34,7 @@ export async function chat(positionals: string[]): Promise<number> {
     let state = initial;
     while (state.busy) {
       for (const permission of state.permissions ?? []) {
-        console.log(`\nClaude requests ${permission.tool}:\n${JSON.stringify(permission.input, null, 2)}`);
+        console.log(`\nThe assistant requests ${permission.tool}:\n${JSON.stringify(permission.input, null, 2)}`);
         if (!rl || closed) {
           console.log(`Open http://127.0.0.1:${port}/chat to approve or decline this operation.`);
           return null;
@@ -67,7 +67,7 @@ export async function chat(positionals: string[]): Promise<number> {
   let state = (await hist.json()) as State;
   // A fresh installation already queued Claude's opening question. Show its
   // answer before prompting, so terminal setup does not silently miss it.
-  if (state.busy) console.log("Claude is working…");
+  if (state.busy) console.log("Working…");
   const ready = await waitForReply(state);
   if (!ready) return 1;
   state = ready;
@@ -79,7 +79,7 @@ export async function chat(positionals: string[]): Promise<number> {
     while (!closed) {
       const t = (await rl.question("\n> ").catch(() => "/exit")).trim();
       if (t === "/exit" || t === "/quit") break;
-      if (t) { console.log("Claude is working…"); await send(t); }
+      if (t) { console.log("Working…"); await send(t); }
     }
   } else {
     const input = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
