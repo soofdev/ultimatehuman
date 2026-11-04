@@ -5,7 +5,7 @@ import { join, dirname, basename } from "node:path";
 import type { Finding, Plugin } from "@ultimatehuman/sdk";
 import type { Config } from "./config/schema";
 import JSON5 from "json5";
-import { configJsonSchema, migrateConfig, MODEL_CHOICES, MODEL_STAGES, DEFAULT_MODEL } from "./config/schema";
+import { configJsonSchema, migrateConfig, MODEL_CHOICES, MODEL_STAGES, DEFAULT_MODEL, SecretRef } from "./config/schema";
 import { loadConfig, loadRawConfig, writeConfig, defaultConfigPath, resolveSecretRefs, type SecretRefValue } from "./config/load";
 import { ensureHome, controlKey } from "./home";
 import { Store } from "./store/store";
@@ -28,9 +28,13 @@ import { setupStatusText } from "./setup/pending";
 import { checkPending, currentGrade } from "./setup/concierge";
 import { loadEngineEnv } from "./envfile";
 import { Chat, mergePatch } from "./chat/chat";
+import { chatActions } from "./chat/actions";
+import { ConnectionRequests, SOURCE_GUIDES } from "./chat/connections";
 import { validationGateFor } from "./pipelines/registry";
 import { ChatTelegram } from "./chat/telegram";
 import { allowedFile, fileType, saveToInbox, sentNote } from "./chat/files";
+import { workspaceRoutes, type ServiceControl } from "./setup/workspace";
+import { claudeModelCatalog } from "./runner/models";
 
 export interface DaemonHandle {
   server: RunningServer;
@@ -42,6 +46,7 @@ export interface DaemonOptions {
   plugins: readonly Plugin[];
   staticDir: string | null;
   version: string;
+  service?: ServiceControl;
 }
 
 /**
@@ -81,6 +86,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     if (src.kind === "anthropic_api_key") return { ANTHROPIC_API_KEY: await resolveSecretRefs(src.apiKey as SecretRefValue, configPath) };
     return {};
   };
+  const chatModels = claudeModelCatalog(home, runnerEnv);
 
   let server: RunningServer | null = null;
   const notifier = new Notifier({ plugins: opts.plugins, getConfig: () => config, configPath, log });
@@ -119,7 +125,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     if (!f) return null;
     const o = output();
     const labels = ((o && (config.plugins[o.manifest.id]?.options?.labels as string[])) ?? ["ultimatehuman"]) as string[];
-    const repo = o ? String(config.plugins[o.manifest.id]?.credentials?.repo ?? "") : "";
+    const repo = config.repos.find((r) => r.name === f.repo)?.issueRepo ?? (o ? String(config.plugins[o.manifest.id]?.credentials?.repo ?? "") : "");
     return { f, issue: renderIssue(f, labels), repo, dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true };
   };
 
@@ -171,38 +177,56 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   };
 
   /** Dashboard edits: patch the file as written (not the defaulted config), validate, write, and use it at once. */
-  const patchConfig = async (patch: (raw: Record<string, any>) => void) => {
-    const before = new Set(config.pipelines.map((p) => p.id));
-    // Edits apply to the current shape: an old file (single `radar` block) is migrated first, so a pipelines patch lands on a list.
-    const raw = migrateConfig(JSON5.parse(await loadRawConfig(configPath))) as Record<string, any>;
-    patch(raw);
-    config = await writeConfig(raw, configPath, "// ultimatehuman config. Secrets are ${ENV_VAR} references only. Edited from the dashboard; every write validates first.");
-    // Pipelines added get their instruction set now (copied from their template); deleted ones are archived and unqueued.
-    for (const id of before) if (!registry.get(id)) (registry.archive(id), rt.forget(id), log(`pipeline ${id} deleted; its instructions archived`));
-    registry.ensureAll();
-    emit({ type: "config.updated" });
-    emit({ type: "pipelines.updated" });
-    return config;
+  let writes: Promise<unknown> = Promise.resolve();
+  const patchConfig = (patch: (raw: Record<string, any>) => void): Promise<Config> => {
+    const next = writes.then(async () => {
+      const before = new Set(config.pipelines.map((p) => p.id));
+      // Edits apply to the current shape: an old file (single `radar` block) is migrated first, so a pipelines patch lands on a list.
+      const raw = migrateConfig(JSON5.parse(await loadRawConfig(configPath))) as Record<string, any>;
+      patch(raw);
+      config = await writeConfig(raw, configPath, "// ultimatehuman config. Secrets are ${ENV_VAR} references only. Edited from the dashboard; every write validates first.");
+      tracker.setReserve(config.governor.humanReservePct);
+      // Pipelines added get their instruction set now (copied from their template); deleted ones are archived and unqueued.
+      for (const id of before) if (!registry.get(id)) (registry.archive(id), rt.forget(id), log(`pipeline ${id} deleted; its instructions archived`));
+      registry.ensureAll();
+      emit({ type: "config.updated" });
+      emit({ type: "pipelines.updated" });
+      return config;
+    });
+    writes = next.catch(() => {});
+    return next;
   };
 
   const gradeDeps = { getConfig: () => config, readRawConfig: () => loadRawConfig(configPath), plugins: opts.plugins };
   const scopesByPlugin = Object.fromEntries(opts.plugins.map((p) => [p.manifest.id, p.manifest.requiredScopes]));
+  const workspace = workspaceRoutes({ home, config: () => config, patch: patchConfig, plugins: opts.plugins, store, runtime: rt, credentials: resolveCredentials, runnerEnv, emit, ...(opts.service ? { service: opts.service } : {}) });
+  const connections = new ConnectionRequests(store, emit);
+  const connecting = new Set<string>();
+  const operations = chatActions({ routes: workspace, config: () => config, configPath, registry, runtime: rt, plugins: opts.plugins, emit, connections });
   const chat = new Chat({
     home,
     store,
     getConfig: () => config,
     readRawConfig: () => loadRawConfig(configPath),
     applyPatch: async (p) => {
-      await patchConfig((raw) => mergePatch(raw, p));
+      await patchConfig((raw) => {
+        mergePatch(raw, p);
+        for (const plugin of opts.plugins) for (const field of plugin.manifest.credentials.filter((f) => f.secret)) {
+          const value = (p.plugins as Record<string, any> | undefined)?.[plugin.manifest.id]?.credentials?.[field.key];
+          if (value !== undefined && !SecretRef.safeParse(value).success) throw new Error(`Use the connection form to save ${field.label}; use a secret reference in configuration.`);
+        }
+      });
     },
     runnerEnv,
     emit,
     log,
     setupStatus: async () => setupStatusText(config, await currentGrade(gradeDeps), scopesByPlugin),
+    context: operations.context,
+    executeAction: operations.execute,
   });
   /** The only places chat files may be served or sent from: the install home and the configured repos. */
   const chatRoots = () => [home, ...config.repos.map((r) => r.path)];
-  const chatTelegram = new ChatTelegram({ store, chat, home, chatRoots, getConfig: () => config, configPath, log });
+  const chatTelegram = new ChatTelegram({ store, chat, home, chatRoots, getConfig: () => config, configPath, log, emit, patch: async (p) => { await patchConfig((raw) => mergePatch(raw, p)); } });
 
   server = await startServer({
     host: config.server.host,
@@ -211,6 +235,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     logDir: join(home, "logs"),
     controlKey: controlKey(),
     routes: {
+      ...workspace,
       "GET /api/status": async () => ({
         json: {
           version: opts.version,
@@ -280,6 +305,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       "POST /api/pipelines/:id": async (_r, body, p) => {
         if (!registry.get(p.id!)) return { status: 404, json: { error: `no pipeline "${p.id}"` } };
         const { id: _ignore, ...fields } = (body ?? {}) as Record<string, unknown>;
+        if (rt.busy() && rt.current()?.pipelineId === p.id && ["repos", "sources", "signalTypes"].some((k) => k in fields)) return { status: 409, json: { error: "Wait for this investigation to finish before changing its scope." } };
         if (!Object.keys(fields).length) return { status: 400, json: { error: "send the fields to change" } };
         try {
           await patchConfig((raw) => {
@@ -324,6 +350,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       "GET /api/findings/:id": async (_r, _b, p) => {
         const x = issueFor(p.id!);
         return x ? { json: { finding: x.f, issuePreview: x.issue, repo: x.repo, dryRun: x.dryRun } } : { status: 404, json: { error: "no such finding" } };
+      },
+      "POST /api/findings/:id/decision": async (_r, body, p) => {
+        const f = store.getFinding(p.id!) as (Finding & Record<string, any>) | undefined;
+        if (!f || !f.clusterId) return { status: 404, json: { error: "Finding not found." } };
+        const revision = store.rulingHistory(f.clusterId).at(-1)?.id ?? 0;
+        if (body.expectedRuling !== undefined && body.expectedRuling !== revision) return { status: 409, json: { error: "This decision has changed. Refresh the case before deciding." } };
+        const action = String(body.action);
+        const reason = String(body.reason ?? "").trim();
+        if (!["accept", "dismiss", "later", "reopen"].includes(action)) return { status: 400, json: { error: "Choose accept, dismiss, later, or reopen." } };
+        if (reason.length > 500 || (action === "dismiss" && !reason)) return { status: 400, json: { error: "Give a dismissal reason between 1 and 500 characters." } };
+        const ruling = rule(f.clusterId, action === "accept" ? "file" : action === "later" ? "park" : action === "reopen" ? "clear" : "dismiss", reason || null, action === "accept" ? { dryRun: true, note: "Accepted as a local finding. No issue was published." } : {});
+        const messages: Record<string, string> = { accept: "Finding accepted and saved in Results. No issue was published.", dismiss: "Finding dismissed. Your reason will inform future investigations.", later: "Saved for later. New occurrences can bring this case back for review.", reopen: "Finding returned to the review queue." };
+        return { json: { ok: true, ruling, message: messages[action] } };
       },
       "POST /api/findings/:id/file": async (_r, _b, p) => {
         const x = issueFor(p.id!);
@@ -457,6 +496,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       "POST /api/instructions": async (_r, body) => {
         const pipe = pipelineParam(body.pipelineId);
         if (!pipe) return { status: 404, json: { error: "no such pipeline" } };
+        if (body.expectedVersion !== undefined && body.expectedVersion !== registry.instructions(pipe.id).current().version.version) return { status: 409, json: { error: "Guidelines changed since you opened them. Reload the latest version before saving; your draft is preserved." } };
         try {
           const v = registry.instructions(pipe.id).save(String(body.brief) as BriefId, String(body.text ?? ""), String(body.note ?? ""));
           log(`instructions ${pipe.id} v${v.version} saved: ${v.note}`);
@@ -469,6 +509,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       "POST /api/instructions/revert": async (_r, body) => {
         const pipe = pipelineParam(body.pipelineId);
         if (!pipe) return { status: 404, json: { error: "no such pipeline" } };
+        if (body.expectedVersion !== undefined && body.expectedVersion !== registry.instructions(pipe.id).current().version.version) return { status: 409, json: { error: "Guidelines changed while you were viewing the history. Reload before restoring a version." } };
         try {
           const v = registry.instructions(pipe.id).revert(Number(body.version), body.note ? String(body.note) : undefined);
           log(`instructions ${pipe.id} v${v.version}: ${v.note}`);
@@ -485,6 +526,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         if (!["apply", "reject", "park"].includes(ruling)) return { status: 400, json: { error: "ruling must be apply, reject or park" } };
         if (reason.length > 500) return { status: 400, json: { error: "keep the reason under 500 characters" } };
         try {
+          const proposal = store.getProposal(p.id!);
+          if (ruling === "apply" && proposal && body.expectedVersion !== undefined && body.expectedVersion !== registry.instructions(pipelineOfProposal(proposal)).current().version.version) return { status: 409, json: { error: "Guidelines changed since this suggestion was prepared. Review the latest guidelines before applying changes." } };
           const out = ruleProposal(store, (x) => registry.instructions(pipelineOfProposal(x)), p.id!, ruling as "apply" | "reject" | "park", reason || null);
           log(`proposal ${p.id}: ${ruling}${out.version ? ` -> instructions v${out.version.version}` : ""}${reason ? ` (${reason})` : ""}`);
           emit({ type: "ruling", proposal: out.proposal });
@@ -527,7 +570,79 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           return { status: 400, json: { error: (e as Error).message } };
         }
       },
-      "GET /api/chat": async () => ({ json: { messages: chat.history(), busy: chat.busy() } }),
+      "GET /api/chat/telegram": async () => ({ json: chatTelegram.status() }),
+      "POST /api/chat/telegram/connect": async (_r, body) => {
+        try { return { json: await chatTelegram.connect(typeof body.token === "string" ? body.token : undefined) }; }
+        catch (e) { return { status: 400, json: { error: (e as Error).message } }; }
+      },
+      "GET /api/chat": async () => ({ json: {
+        messages: chat.history(), busy: chat.busy(), activity: chat.progress(),
+        model: config.models.chat ?? DEFAULT_MODEL,
+        connections: connections.list(), permissions: chat.permissions(),
+        accountKind: src.kind === "anthropic_api_key" ? "api" : "subscription",
+        cliCommand: [process.execPath, process.argv[1]].filter(Boolean).map((s) => `'${s!.replace(/'/g, "'\\''")}'`).join(" "),
+      } }),
+      "GET /api/chat/models": async (req) => {
+        const current = config.models.chat ?? DEFAULT_MODEL;
+        try { return { json: { current, default: DEFAULT_MODEL, models: await chatModels(query(req, "refresh") === "1") } }; }
+        catch (e) { return { json: { current, default: DEFAULT_MODEL, models: [], error: (e as Error).message } }; }
+      },
+      "POST /api/chat/model": async (_r, body) => {
+        if (typeof body?.model !== "string") return { status: 400, json: { error: "Choose a model from Claude Code." } };
+        try {
+          const models = await chatModels();
+          if (!models.some((m) => m.id === body.model)) return { status: 400, json: { error: "That model is not in Claude Code’s current list. Refresh the list and choose again." } };
+          await patchConfig((raw) => { raw.models = { ...(raw.models ?? {}), chat: body.model }; });
+          emit({ type: "chat.model", model: config.models.chat });
+          return { json: { ok: true, model: config.models.chat } };
+        } catch (e) { return { status: 503, json: { error: (e as Error).message } }; }
+      },
+      "GET /api/chat/connections": async () => ({ json: { sources: opts.plugins.filter((p) => p.manifest.id in SOURCE_GUIDES).map((p) => ({
+        id: p.manifest.id, name: p.manifest.displayName,
+        fields: p.manifest.credentials.map((f) => ({ ...f, value: f.secret ? "" : String(config.plugins[p.manifest.id]?.credentials[f.key] ?? f.default ?? "") })),
+        configured: config.plugins[p.manifest.id]?.enabled === true,
+        savedOptions: config.plugins[p.manifest.id]?.options ?? {},
+        scopes: p.manifest.requiredScopes,
+        guide: SOURCE_GUIDES[p.manifest.id as keyof typeof SOURCE_GUIDES],
+      })) } }),
+      "POST /api/chat/connections/request": async (_r, body) => {
+        try { return { json: { request: connections.request(body.source, body.project) } }; }
+        catch (e) { return { status: 400, json: { error: (e as Error).message } }; }
+      },
+      "POST /api/chat/connections/:id": async (req, body, params) => {
+        const request = connections.list().find((r) => r.id === params.id);
+        if (!request) return { status: 404, json: { error: "Connection request not found. Reopen the connection form." } };
+        if (request.status === "connected") return { json: { ok: true, alreadyConnected: true } };
+        if (connecting.has(request.id)) return { status: 409, json: { error: "This connection is already being checked." } };
+        connecting.add(request.id);
+        try {
+          const result = await workspace["POST /api/workspace/connections/:id"]!(req, body, { id: request.source });
+          if ((result.status ?? 200) >= 400) {
+            // Provider error bodies must never echo a credential back into the UI.
+            let json = JSON.stringify(result.json);
+            for (const value of Object.values(body.credentials ?? {})) if (typeof value === "string" && value.length >= 8) json = json.split(value).join("[redacted]");
+            return { ...result, json: JSON.parse(json) };
+          }
+          connections.complete(request.id);
+          const name = request.source === "posthog" ? "PostHog" : "Datadog";
+          const turn = chat.send(`${name} is connected${request.project ? ` for ${request.project}` : ""}. Continue setting up the first pipeline.`, "dashboard", `The user submitted the in-chat connection form. The engine verified read access. ${JSON.stringify(result.json)}. Continue the previously requested setup/run, preserving existing pipelines and original defaults. Never ask for the saved keys again.`);
+          void turn.reply.catch(() => {});
+          emit({ type: "workspace.updated" });
+          return result;
+        } finally { connecting.delete(request.id); }
+      },
+      "POST /api/chat/permissions/:id": async (_r, body, params) => {
+        if (typeof body.allow !== "boolean") return { status: 400, json: { error: "Choose Allow or Decline." } };
+        if (!chat.resolvePermission(params.id!, body.allow)) return { status: 409, json: { error: "This permission request has ended." } };
+        return { json: { ok: true } };
+      },
+      "POST /api/chat/start": async (_r, body) => {
+        if (chat.history(1).length || chat.busy()) return { json: { started: false } };
+        const context = [body.repository ? `Use these repositories for the first project: ${String(body.repository).slice(0, 2000)}.` : config.repos.length ? "Continue from the existing repositories and pipelines. Do not repeat completed setup." : "Ask which project to start with and which repos belong to it. Keep the opening question to two short sentences.", body.directory ? `Installation directory (context only): ${String(body.directory).slice(0, 2000)}.` : ""].join(" ");
+        const turn = chat.send(config.repos.length ? "Help me manage this workspace." : "Help me set up ultimatehuman.", body.source === "cli" ? "cli" : "dashboard", context);
+        void turn.reply.catch(() => {});
+        return { json: { started: true } };
+      },
       "GET /api/chat/file": async (req) => {
         const path = allowedFile(new URL(req.url ?? "/", "http://x").searchParams.get("path") ?? "", chatRoots());
         if (!path) return { status: 403, json: { error: "only files inside the install home or a configured repo are served" } };
@@ -573,6 +688,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         // A config that now references a key saved with `ultimatehuman key` resolves at once, not on the next minute check.
         loadEngineEnv();
         config = await loadConfig(configPath);
+        tracker.setReserve(config.governor.humanReservePct);
         registry.ensureAll();
         log("config reloaded");
       } catch (e) {
@@ -627,7 +743,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     stop: async () => {
       clearInterval(tick);
       chatTelegram.stop();
-      await new Promise<void>((r) => server!.server.close(() => r()));
+      await server!.close();
     },
   };
 }

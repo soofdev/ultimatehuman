@@ -97,7 +97,7 @@ export class PipelineRuntime {
     for (const p of this.d.registry.list()) {
       if (!p.enabled || this.fired.get(p.id) === minute) continue;
       const s = parseSchedule(p.schedule);
-      if ("error" in s || !due(s, now)) continue;
+      if ("error" in s || !due(s, now, p.timezone)) continue;
       this.fired.set(p.id, minute);
       this.trigger(p.id, "schedule");
     }

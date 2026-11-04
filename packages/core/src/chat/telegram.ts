@@ -1,3 +1,6 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { join } from "node:path";
+import { readEnvFile, setEngineEnv } from "../envfile";
 import type { Config } from "../config/schema";
 import { resolveSecretRefs, type SecretRefValue } from "../config/load";
 import type { Store } from "../store/store";
@@ -8,8 +11,8 @@ import { allowedFile, extractSends, fileType, PHOTO_TYPES, saveToInbox, sentNote
 
 /**
  * Telegram door of the setup chat (config `chat.telegram`, off by default).
- * Long-polls getUpdates; the first chat that writes is bound (kv) and every
- * other chat is ignored. Its messages join the same turn queue as the other
+ * Long-polls getUpdates; a private chat is paired using a short-lived /start link.
+ * Every other chat is ignored. Its messages join the same turn queue as the other
  * doors; the reply goes back with sendMessage. Photos/documents are fetched with
  * getFile into the chat inbox and announced in the prompt like the bridge does;
  * `[[send:path]]` files in a reply go out with sendPhoto (sendDocument for
@@ -19,10 +22,56 @@ import { allowedFile, extractSends, fileType, PHOTO_TYPES, saveToInbox, sentNote
 export class ChatTelegram {
   private stopped = false;
   private abort = new AbortController();
+  private pollAbort = new AbortController();
+  private revision = 0;
+  private connecting = false;
 
   constructor(
-    private d: { store: Store; chat: Chat; home: string; chatRoots: () => string[]; getConfig: () => Config; configPath: string; log: (m: string) => void },
+    private d: { store: Store; chat: Chat; home: string; chatRoots: () => string[]; getConfig: () => Config; configPath: string; patch: (patch: Record<string, unknown>) => Promise<void>; emit: (event: unknown) => void; log: (m: string) => void },
   ) {}
+
+  private tokenEnvironment() {
+    return { ...process.env, ...Object.fromEntries(readEnvFile(join(this.d.home, "engine.env"))) };
+  }
+
+  status() {
+    const enabled = !!this.d.getConfig().chat.telegram.enabled;
+    const paired = enabled && typeof this.d.store.getKv("chat.telegram.chatId") === "number";
+    const bot = this.d.store.getKv<{ id: number; username: string }>("chat.telegram.bot");
+    const pairing = this.d.store.getKv<{ code: string; expiresAt: number } | null>("chat.telegram.pairing");
+    const link = bot?.username && (paired ? `https://t.me/${bot.username}` : pairing && pairing.expiresAt > Date.now() ? `https://t.me/${bot.username}?start=${pairing.code}` : undefined);
+    return { enabled, paired, hasToken: !!(this.d.getConfig().chat.telegram.botToken || process.env.UH_CHAT_BOT_TOKEN || readEnvFile(join(this.d.home, "engine.env")).get("UH_CHAT_BOT_TOKEN")), username: bot?.username ?? null, link: link || null };
+  }
+
+  /** Verify a token without posting, then pair through a short-lived private /start link. */
+  async connect(supplied?: string) {
+    if (this.connecting) throw new Error("A Telegram connection is already being checked.");
+    this.connecting = true;
+    try {
+      const tg = this.d.getConfig().chat.telegram;
+      const env = this.tokenEnvironment();
+      const previous = tg.botToken ? await resolveSecretRefs(tg.botToken, this.d.configPath, env).catch(() => "") : "";
+      const token = supplied?.trim() || previous || env.UH_CHAT_BOT_TOKEN || "";
+      if (!token) throw new Error("Save a bot token with ultimatehuman key UH_CHAT_BOT_TOKEN or enter it in Connect Telegram.");
+      if (!/^\d+:[A-Za-z0-9_-]+$/.test(token)) throw new Error("Enter a valid BotFather token.");
+      const bot = await this.call(tg.apiBase, token, "getMe", {}, 15_000);
+      if (!bot?.is_bot || !/^[A-Za-z0-9_]+$/.test(bot.username ?? "")) throw new Error("Telegram did not return a valid bot.");
+      const savedBot = this.d.store.getKv<{ id: number }>("chat.telegram.bot");
+      const keepBinding = token === previous && savedBot?.id === bot.id && typeof this.d.store.getKv("chat.telegram.chatId") === "number";
+      this.revision++;
+      this.pollAbort.abort();
+      if (!keepBinding) {
+        this.d.store.setKv("chat.telegram.chatId", null);
+        if (token !== previous) this.d.store.setKv("chat.telegram.offset", 0);
+        this.d.store.setKv("chat.telegram.pairing", { code: randomBytes(24).toString("base64url"), expiresAt: Date.now() + 10 * 60_000 });
+      }
+      this.d.store.setKv("chat.telegram.bot", { id: bot.id, username: bot.username });
+      setEngineEnv({ UH_CHAT_BOT_TOKEN: token }, join(this.d.home, "engine.env"));
+      await this.d.patch({ chat: { telegram: { enabled: true, botToken: "${UH_CHAT_BOT_TOKEN}" } } });
+      this.d.emit({ type: "chat.telegram", ...this.status() });
+      return this.status();
+    } finally { this.connecting = false; }
+  }
 
   start(): void {
     void this.loop();
@@ -37,14 +86,14 @@ export class ChatTelegram {
   async push(text: string): Promise<boolean> {
     const tg = this.d.getConfig().chat?.telegram;
     const chatId = this.d.store.getKv<number>("chat.telegram.chatId");
-    if (!tg?.enabled || !tg.botToken || chatId === undefined) return false;
-    const token = await resolveSecretRefs(tg.botToken as SecretRefValue, this.d.configPath);
+    if (!tg?.enabled || !tg.botToken || typeof chatId !== "number") return false;
+    const token = await resolveSecretRefs(tg.botToken as SecretRefValue, this.d.configPath, this.tokenEnvironment());
     await this.call(tg.apiBase, token, "sendMessage", { chat_id: chatId, text: text.slice(0, 4000) }, 15_000);
     return true;
   }
 
   private async call(base: string, token: string, method: string, body: unknown, timeoutMs: number): Promise<any> {
-    const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(timeoutMs)]);
+    const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(timeoutMs), ...(method === "getUpdates" ? [this.pollAbort.signal] : [])]);
     const r = await fetch(`${base.replace(/\/+$/, "")}/bot${token}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
     const j = (await r.json().catch(() => ({}))) as any;
     if (!r.ok || j.ok === false) throw new Error(`${method}: ${j.description ?? `HTTP ${r.status}`}`);
@@ -98,24 +147,33 @@ export class ChatTelegram {
     let lastErr = "";
     while (!this.stopped) {
       const tg = this.d.getConfig().chat?.telegram;
-      if (!tg?.enabled || !tg.botToken) {
+      if (this.connecting || !tg?.enabled || !tg.botToken) {
         await pause(3000);
         continue;
       }
       try {
-        const token = await resolveSecretRefs(tg.botToken as SecretRefValue, this.d.configPath);
+        const token = await resolveSecretRefs(tg.botToken as SecretRefValue, this.d.configPath, this.tokenEnvironment());
         const offset = this.d.store.getKv<number>("chat.telegram.offset") ?? 0;
+        const revision = this.revision;
+        this.pollAbort = new AbortController();
         const updates = (await this.call(tg.apiBase, token, "getUpdates", { offset, timeout: 25, allowed_updates: ["message"] }, 35_000)) as any[];
+        if (revision !== this.revision) continue;
         lastErr = "";
         for (const u of updates) {
           this.d.store.setKv("chat.telegram.offset", u.update_id + 1);
           const m = u.message;
           if (!m?.chat?.id || (typeof m.text !== "string" && !m.photo && !m.document)) continue;
-          let bound = this.d.store.getKv<number>("chat.telegram.chatId");
-          if (bound === undefined) {
+          let bound = this.d.store.getKv<number | null>("chat.telegram.chatId");
+          if (typeof bound !== "number") {
+            const pairing = this.d.store.getKv<{ code: string; expiresAt: number } | null>("chat.telegram.pairing");
+            const code = /^\/start(?:@[A-Za-z0-9_]+)? ([A-Za-z0-9_-]+)$/.exec(m.text ?? "")?.[1];
+            if (m.chat.type !== "private" || !pairing || pairing.expiresAt < Date.now() || !code || code.length !== pairing.code.length || !timingSafeEqual(Buffer.from(code), Buffer.from(pairing.code))) continue;
             bound = m.chat.id as number;
             this.d.store.setKv("chat.telegram.chatId", bound);
-            this.d.log(`chat telegram: bound to chat ${bound}`);
+            this.d.store.setKv("chat.telegram.pairing", null);
+            this.d.emit({ type: "chat.telegram", ...this.status() });
+            await this.call(tg.apiBase, token, "sendMessage", { chat_id: bound, text: "Connected to ultimatehuman. This is the same conversation as your dashboard and CLI." }, 15_000);
+            continue;
           }
           if (m.chat.id !== bound) {
             this.d.log(`chat telegram: ignored a message from unbound chat ${m.chat.id}`);
@@ -140,6 +198,7 @@ export class ChatTelegram {
         }
       } catch (e) {
         if (this.stopped) break;
+        if (this.pollAbort.signal.aborted) continue;
         const msg = (e as Error).message;
         if (msg !== lastErr) this.d.log(`chat telegram: ${msg}`);
         lastErr = msg;

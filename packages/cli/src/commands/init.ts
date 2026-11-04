@@ -3,7 +3,7 @@ import { openSync, existsSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { ensureHome, controlKey, homeId, writeConfig, TEMPLATES, instantiate, describeSchedule, defaultConfigPath, runClaude, claudeBin, readOnlyHttp, outboundHttp, notifyHosts, scanRepo, detectFramework, gradeSetup, gradeProbes, setEngineEnv, readEnvFile, writeEnvFile, engineEnvPath, type RateLimitReading, type PendingItem } from "@ultimatehuman/core";
+import { ensureHome, connectRepository, controlKey, homeId, writeConfig, TEMPLATES, instantiate, describeSchedule, defaultConfigPath, runClaude, claudeBin, readOnlyHttp, outboundHttp, notifyHosts, scanRepo, detectFramework, gradeSetup, gradeProbes, setEngineEnv, readEnvFile, writeEnvFile, engineEnvPath, type RateLimitReading, type PendingItem } from "@ultimatehuman/core";
 import type { NotifyPlugin, Plugin, ProbeResult } from "@ultimatehuman/sdk";
 import { bundledPlugins } from "../plugins";
 import type { GlobalFlags } from "../flags";
@@ -123,14 +123,32 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     /* not installed */
   }
   const oauth = findEnv(["CLAUDE_CODE_OAUTH_TOKEN"]);
-  const hasLoginFile = existsSync(join(homedir(), ".claude", ".credentials.json"));
+  let hasLogin = existsSync(join(homedir(), ".claude", ".credentials.json"));
+  try {
+    // Claude owns macOS Keychain and custom config-directory discovery.
+    hasLogin = JSON.parse(execFileSync(claudeBin(), ["auth", "status"], { stdio: ["ignore", "pipe", "ignore"] }).toString()).loggedIn === true;
+  } catch { /* The live request below remains authoritative, including older CLI versions. */ }
   if (!claudeVersion) {
     line.err("Claude", "Claude Code is not installed. Install it, run `claude` once to sign in, then rerun init.");
     return 1;
   }
   const authKind = oauth ? "claude_oauth_token" : "claude_login";
-  line.ok("Claude", `Claude Code ${claudeVersion} · ${oauth ? `signed in via ${c.bold("$" + oauth.name)}` : hasLoginFile ? "signed in (local login)" : "login not detected yet"} · ${c.muted("uses your subscription")}`);
+  line.ok("Claude", `Claude Code ${claudeVersion} · ${oauth ? `signed in via ${c.bold("$" + oauth.name)}` : hasLogin ? "signed in (local login)" : "login not detected yet"} · ${c.muted("uses your subscription")}`);
   add({ id: "claude.detect", label: "Claude", status: "ok", summary: `Claude Code ${claudeVersion}, ${oauth ? `token from $${oauth.name}` : "local login"}` });
+
+  // Verify the existing account before asking for repositories or integrations.
+  const cp = await spin("Claude", "sending one tiny prompt to read your usage window", () =>
+    runClaude({ prompt: "Reply with the single word ok.", cwd: home, model: "haiku", maxTurns: 1, tools: [], env: oauth ? { CLAUDE_CODE_OAUTH_TOKEN: oauth.value } : {} }),
+  );
+  const rl: RateLimitReading | undefined = cp.rateLimits.at(-1);
+  if (!cp.ok) {
+    line.err("Claude", `${cp.error ?? "no answer"} · run \`claude\` once to sign in, then rerun init`);
+    return 1;
+  }
+  const windowLine = rl?.fiveHourPct !== undefined ? `window ${rl.fiveHourPct}% used · resets ${hhmm(rl.fiveHourResetsAt)} · 30% always kept for you` : "window usage not reported by this CLI: the radar will admit one small step at a time";
+  line.ok("Claude", `answered in ${(cp.durationMs / 1000).toFixed(1)}s · ${windowLine}`);
+  add({ id: "claude.probe", label: "Claude", status: "ok", summary: `Answered in ${(cp.durationMs / 1000).toFixed(1)}s`, detail: windowLine });
+  mark("probe_claude");
 
   // Repos: the checkout we were started in is the default; more can be added. Each must be a git checkout.
   const cwdRepo = gitTopLevel();
@@ -140,20 +158,22 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
     repoInput = await ask("Which repos should the pipeline watch? (local paths, comma-separated)", cwdRepo ? tilde(cwdRepo) : undefined);
   } else if (!repoInput) repoInput = cwdRepo ?? "";
   const repoPaths: string[] = [];
-  const takeRepos = (input: string) => {
+  const takeRepos = async (input: string) => {
     for (const raw of input.split(",").map((x) => x.trim()).filter(Boolean)) {
-      const abs = resolve(raw.replace(/^~(?=$|\/)/, homedir()));
+      const abs = /^(https?:\/\/|ssh:\/\/|git@)/.test(raw)
+        ? (await connectRepository(raw, home, [])).path
+        : resolve(raw.replace(/^~(?=$|\/)/, homedir()));
       const top = existsSync(abs) ? gitTop(abs) : "";
       if (!top) line.warn("Repo", `${raw}: not a git checkout, skipped`);
       else if (!repoPaths.includes(top)) repoPaths.push(top);
     }
   };
-  takeRepos(repoInput);
+  await takeRepos(repoInput);
   if (!flags.nonInteractive && !flags.repos) {
     for (;;) {
       const more = await ask("Another repo path? (Enter when done)");
       if (!more) break;
-      takeRepos(more);
+      await takeRepos(more);
     }
   }
   const usedNames = new Set<string>();
@@ -354,20 +374,7 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
       });
   }
 
-  // Live probes: Claude first, then each connected source.
-  const cp = await spin("Claude", "sending one tiny prompt to read your usage window", () =>
-    runClaude({ prompt: "Reply with the single word ok.", cwd: home, model: "haiku", maxTurns: 1, tools: [], env: oauth ? { CLAUDE_CODE_OAUTH_TOKEN: oauth.value } : {} }),
-  );
-  const rl: RateLimitReading | undefined = cp.rateLimits.at(-1);
-  if (!cp.ok) {
-    line.err("Claude", `${cp.error ?? "no answer"} · run \`claude\` once to sign in, then rerun init`);
-    return 1;
-  }
-  const windowLine = rl?.fiveHourPct !== undefined ? `window ${rl.fiveHourPct}% used · resets ${hhmm(rl.fiveHourResetsAt)} · 30% always kept for you` : "window usage not reported by this CLI: the radar will admit one small step at a time";
-  line.ok("Claude", `answered in ${(cp.durationMs / 1000).toFixed(1)}s · ${windowLine}`);
-  add({ id: "claude.probe", label: "Claude", status: "ok", summary: `Answered in ${(cp.durationMs / 1000).toFixed(1)}s`, detail: windowLine });
-  mark("probe_claude");
-
+  // Probe the selected sources with the account already verified.
   const sources = sourcePlugins.filter((p) => found[p.manifest.id]);
   const pluginConfig: Record<string, any> = {};
   const probeResults: Record<string, ProbeResult> = {};
@@ -628,8 +635,10 @@ async function runInit(flags: GlobalFlags, _args: string[]): Promise<number> {
   console.log(`  ${c.muted("Lost it? Run")} ultimatehuman dashboard ${c.muted("for a fresh link.")}`);
   const opener = process.env.BROWSER ?? (process.platform === "darwin" ? "open" : "xdg-open");
   try {
-    spawn(opener, [url], { detached: true, stdio: "ignore" }).unref();
-    console.log(`  ${c.muted("Opening your browser…")}`);
+    if (!flags.noOpen && !flags.nonInteractive) {
+      spawn(opener, [url], { detached: true, stdio: "ignore" }).unref();
+      console.log(`  ${c.muted("Opening your browser…")}`);
+    }
   } catch {
     /* headless machine: the link above is enough */
   }

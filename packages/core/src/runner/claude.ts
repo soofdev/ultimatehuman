@@ -2,12 +2,12 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readEnvFile } from "../envfile";
 
 /**
- * `claude -p` subprocess runner. Each step gets a read-only tool allowlist
- * (Read, Grep, Glob), no MCP servers, no user settings, --max-turns, and a cwd
- * that holds only the run's signal bundle. The stream-json output carries the
- * real `rate_limit_event`s the governor reads.
+ * Autonomous passes get read-only tools. Interactive setup additionally uses
+ * Claude's native shell/edit/web tools and forwards permission requests to the
+ * shared chat. Stream-json carries the real rate limits the governor reads.
  */
 
 export interface RateLimitReading {
@@ -51,11 +51,29 @@ export interface ClaudeRunOptions {
   addDirs?: readonly string[];
   /** Appended to Claude Code's system prompt (the setup chat's role and rules). */
   appendSystemPrompt?: string;
+  /** Interactive setup uses Claude's native permission protocol; autonomous passes stay read-only. */
+  interactive?: {
+    permission: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
+    activity?: (tool: string) => void;
+  };
 }
 
 export function claudeBin(): string {
   const local = join(homedir(), ".local", "bin", "claude");
   return process.env.ULTIMATEHUMAN_CLAUDE_BIN ?? (existsSync(local) ? local : "claude");
+}
+
+/** Use the same authentication environment for readiness checks and model calls. */
+export function claudeEnv(overrides: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  const engineSecrets = new Set(readEnvFile().keys());
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) continue;
+    if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_") || k === "ANTHROPIC_API_KEY") continue;
+    if (engineSecrets.has(k)) continue;
+    env[k] = v;
+  }
+  return Object.assign(env, overrides);
 }
 
 const DENIED = ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent", "Skill"];
@@ -88,21 +106,16 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     "--strict-mcp-config",
     "--setting-sources", "",
     // A tool the caller allows on purpose is not denied wholesale; a path-scoped Edit(...) rule also scopes Write.
-    "--disallowedTools", ...DENIED.filter((t) => !tools.some((a) => { const n = a.split("(")[0]; return n === t || (n === "Edit" && t === "Write"); })),
+    "--disallowedTools", ...DENIED.filter((t) => !(opts.interactive && ["Bash", "Write", "Edit", "WebFetch", "WebSearch"].includes(t)) && !tools.some((a) => { const n = a.split("(")[0]; return n === t || (n === "Edit" && t === "Write"); })),
   ];
+  if (opts.interactive) args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--permission-mode", "default", "--tools", "Read,Grep,Glob,Bash,Write,Edit,WebSearch,WebFetch");
   if (tools.length) args.push("--allowedTools", ...tools);
   else args.push("--tools", "");
-  if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
+  if (opts.resumeSessionId) args.push(`--resume=${opts.resumeSessionId}`);
   for (const d of opts.addDirs ?? []) args.push("--add-dir", d);
   if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
 
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined) continue;
-    if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_") || k === "ANTHROPIC_API_KEY") continue;
-    env[k] = v;
-  }
-  Object.assign(env, opts.env);
+  const env = claudeEnv(opts.env);
 
   return new Promise((resolve) => {
     const started = Date.now();
@@ -111,7 +124,17 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
     const transcript: string[] = [];
     let buf = "";
     let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGTERM"), opts.timeoutMs ?? 8 * 60_000);
+    const permissionAbort = new AbortController();
+    let finished = false;
+    let timer = setTimeout(() => child.kill("SIGTERM"), opts.timeoutMs ?? 8 * 60_000);
+    const controls = new Map<string, AbortController>();
+    const write = (value: unknown) => { if (!child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.write(JSON.stringify(value) + "\n"); };
+    let prompted = false;
+    const sendPrompt = () => {
+      if (prompted) return;
+      prompted = true;
+      write({ type: "user", session_id: "", parent_tool_use_id: null, message: { role: "user", content: opts.prompt } });
+    };
     const onAbort = () => child.kill("SIGTERM");
     opts.signal?.addEventListener("abort", onAbort);
     child.stdout.on("data", (d: Buffer) => {
@@ -128,7 +151,31 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
         } catch {
           continue;
         }
-        if (ev.type === "rate_limit_event") {
+        if (opts.interactive && ev.type === "control_response" && ev.response?.request_id === "uh-initialize") {
+          if (ev.response.subtype === "error") { res.error = "Claude could not initialize interactive setup."; child.stdin.end(); }
+          else sendPrompt();
+        } else if (opts.interactive && ev.type === "control_cancel_request") {
+          controls.get(ev.request_id)?.abort();
+        } else if (opts.interactive && ev.type === "control_request") {
+          const controller = new AbortController();
+          controls.set(ev.request_id, controller);
+          const cancel = () => controller.abort();
+          permissionAbort.signal.addEventListener("abort", cancel, { once: true });
+          clearTimeout(timer);
+          // Waiting never grants permission. Expiry aborts the running turn.
+          timer = setTimeout(() => child.kill("SIGTERM"), 15 * 60_000);
+          void (async () => {
+            const allowed = ev.request?.subtype === "can_use_tool" && await opts.interactive!.permission(ev.request.tool_name, ev.request.input ?? {}, controller.signal);
+            if (!controller.signal.aborted) write({ type: "control_response", response: { subtype: "success", request_id: ev.request_id, response: allowed ? { behavior: "allow", updatedInput: ev.request.input } : { behavior: "deny", message: "The user did not approve this operation. Continue without it." } } });
+          })().catch(() => write({ type: "control_response", response: { subtype: "error", request_id: ev.request_id, error: "The permission request could not be completed." } })).finally(() => {
+            controls.delete(ev.request_id);
+            permissionAbort.signal.removeEventListener("abort", cancel);
+            clearTimeout(timer);
+            if (!finished) timer = setTimeout(() => child.kill("SIGTERM"), controls.size ? 15 * 60_000 : opts.timeoutMs ?? 8 * 60_000);
+          });
+        } else if (ev.type === "assistant" && opts.interactive) {
+          for (const block of ev.message?.content ?? []) if (block.type === "tool_use") opts.interactive.activity?.(block.name);
+        } else if (ev.type === "rate_limit_event") {
           const r = parseRateLimit(ev);
           if (r) {
             res.rateLimits.push(r);
@@ -147,13 +194,18 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
           res.outputTokens = ev.usage?.output_tokens ?? 0;
           if (!res.ok) res.error = `${ev.subtype}${ev.result ? `: ${String(ev.result).slice(0, 300)}` : ""}`;
           if (/limit/i.test(res.error ?? "") && /reset|usage/i.test(res.error ?? "")) res.limitHit = true;
+          if (opts.interactive) child.stdin.end();
         }
       }
     });
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
-    child.stdin.end(opts.prompt);
+    child.stdin.on("error", () => {}); // A cancelled CLI may close the pipe during a pending approval.
+    if (opts.interactive) write({ type: "control_request", request_id: "uh-initialize", request: { subtype: "initialize", hooks: {} } });
+    else child.stdin.end(opts.prompt);
     child.on("close", async (code) => {
+      finished = true;
       clearTimeout(timer);
+      permissionAbort.abort();
       opts.signal?.removeEventListener("abort", onAbort);
       res.durationMs = Date.now() - started;
       if (!res.ok && !res.error) res.error = `claude exited ${code}${stderr ? `: ${stderr.slice(0, 300)}` : ""}`;
@@ -164,7 +216,9 @@ export function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
       resolve(res);
     });
     child.on("error", (e) => {
+      finished = true;
       clearTimeout(timer);
+      permissionAbort.abort();
       res.error = e.message;
       res.durationMs = Date.now() - started;
       resolve(res);

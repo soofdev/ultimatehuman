@@ -47,9 +47,14 @@ export function parseSchedule(src: string): Schedule | { error: string } {
 }
 
 /** True when `d` falls in a minute the schedule names. */
-export function due(s: Schedule, d: Date): boolean {
+export function due(s: Schedule, d: Date, timezone?: string): boolean {
   if (s.kind !== "cron") return false;
   const [mi, h, dom, mon, dow] = s.fields as [Set<number>, Set<number>, Set<number>, Set<number>, Set<number>];
+  if (timezone) {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, minute: "numeric", hour: "numeric", hourCycle: "h23", day: "numeric", month: "numeric", weekday: "short" }).formatToParts(d);
+    const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
+    return mi.has(Number(p.minute)) && h.has(Number(p.hour)) && dom.has(Number(p.day)) && mon.has(Number(p.month)) && dow.has(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday!));
+  }
   return mi.has(d.getMinutes()) && h.has(d.getHours()) && dom.has(d.getDate()) && mon.has(d.getMonth() + 1) && dow.has(d.getDay());
 }
 

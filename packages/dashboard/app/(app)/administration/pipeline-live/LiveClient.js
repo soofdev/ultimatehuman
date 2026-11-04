@@ -33,11 +33,12 @@ const lookOf = (n) => (n.held ? 'held' : (n.stage === 'building' || n.round ? 'b
 const DAY_FMT = { weekday: 'short', day: 'numeric', month: 'short' };
 
 /** Refetch the picture every 30s while the tab is visible, and on focus. Keeps the last one on failure. */
-function useLiveSnapshot(initial) {
+function useLiveSnapshot(initial, controlled) {
   const [snap, setSnap] = useState(initial);
   const [failed, setFailed] = useState(false);
   const [checkedAt, setCheckedAt] = useState(() => Date.parse(initial.read_at));
   useEffect(() => {
+    if (controlled) return;
     let stop = false;
     const refresh = async () => {
       if (document.visibilityState !== 'visible') return;
@@ -62,8 +63,8 @@ function useLiveSnapshot(initial) {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, []);
-  return { snap, failed, checkedAt };
+  }, [!!controlled]);
+  return controlled ? { snap: controlled, failed: !!controlled.offline, checkedAt: Date.parse(controlled.read_at) } : { snap, failed, checkedAt };
 }
 
 /** The keys that were not on the page at the previous refresh (empty on the first render). */
@@ -79,8 +80,9 @@ function useArrivals(nodes) {
   return arrived;
 }
 
-export default function LiveClient({ initial }) {
-  const { snap, failed, checkedAt } = useLiveSnapshot(initial);
+/** @param {{ initial: any, snapshot?: any, workspace?: boolean, children?: import('react').ReactNode, activity?: import('react').ReactNode }} props */
+export default function LiveClient({ initial, snapshot = null, workspace = false, children = null, activity = null }) {
+  const { snap, failed, checkedAt } = useLiveSnapshot(initial, snapshot);
   // the clock the relative times read: server time on the first render (no mismatch), then a 15s tick
   const [now, setNow] = useState(() => Date.parse(initial.read_at));
   // day boundaries are the viewer's: the parts that depend on them render after mount
@@ -93,7 +95,15 @@ export default function LiveClient({ initial }) {
   }, []);
   useEffect(() => { setNow(Date.now()); }, [checkedAt]);
 
-  const pic = useMemo(() => livePicture(snap.tickets, now), [snap.tickets, now]);
+  const pic = useMemo(() => {
+    const result = livePicture(snap.tickets, now, snap.stages);
+    if (workspace) {
+      const since = snap.historyStart ? new Date(snap.historyStart) : null;
+      if (since) since.setHours(0, 0, 0, 0);
+      result.shipped.forEach((day) => { day.known = day.count > 0 || (!!since && day.start >= since.getTime()); });
+    }
+    return result;
+  }, [snap.tickets, snap.stages, snap.historyStart, now, workspace]);
   const prefix = useMemo(() => commonPrefix(pic.nodes.map((n) => n.key)), [pic.nodes]);
   const arrived = useArrivals(pic.nodes);
   const sync = lastSyncOf(snap.sync, snap.tickets);
@@ -128,21 +138,21 @@ export default function LiveClient({ initial }) {
         <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Pipeline live</h1>
-            <p className="mt-1 max-w-2xl text-sm text-gray-600">
-              Every ticket of the bug pipeline on its stage, from intake to shipped. Amber is your move.
-            </p>
+            {!workspace && <p className="mt-1 max-w-2xl text-sm text-gray-600">Every ticket of the bug pipeline on its stage, from intake to shipped. Amber is your move.</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <SyncPill sync={sync} now={now} failed={failed} mounted={mounted} />
+            {workspace ? <span className={`uh-live-connection ${failed ? 'offline' : ''}`}><span className="uh-dot" />{failed ? 'Reconnecting · last known state' : 'Live · updates automatically'}</span> : <SyncPill sync={sync} now={now} failed={failed} mounted={mounted} />}
             <Link
-              href="/administration/claims"
+              href={workspace ? snap.reviewHref : '/administration/claims'}
               className="inline-flex min-h-[36px] items-center gap-1 rounded-full bg-white px-3.5 text-sm font-medium text-gray-700 ring-1 ring-gray-200 transition-colors hover:bg-gray-100 hover:text-gray-900"
             >
-              Open the cockpit
+              {workspace ? 'Review findings' : 'Open the cockpit'}
               <ChevronRightIcon className="h-4 w-4 text-gray-400" aria-hidden />
             </Link>
           </div>
         </header>
+
+        {children}
 
         <section aria-label="Summary" className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-[minmax(0,2.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <div data-waiting-on-you className="col-span-2 rounded-2xl lg:col-span-1 bg-amber-50 p-5 ring-1 ring-amber-300">
@@ -155,31 +165,31 @@ export default function LiveClient({ initial }) {
                 <p className="mt-2 text-xs text-amber-800">
                   {w.oldest ? (
                     <>Longest wait:{' '}
-                      <Link href={cockpitHref(w.oldest.stage, w.oldest.key)} data-oldest className="font-semibold underline decoration-amber-400 underline-offset-2 hover:decoration-amber-700">{w.oldest.key}</Link>
+                      <Link href={w.oldest.href || cockpitHref(w.oldest.stage, w.oldest.key)} data-oldest className="font-semibold underline decoration-amber-400 underline-offset-2 hover:decoration-amber-700">{w.oldest.key}</Link>
                       , filed {ago(w.oldest.created, now)}
                     </>
-                  ) : 'tickets on your tabs'}
+                  ) : workspace ? (w.total ? 'Review the decisions and blockers below' : 'No outstanding decisions or blockers') : 'tickets on your tabs'}
                 </p>
               </div>
               <div className="grid flex-1 grid-cols-2 gap-2">
-                <WaitTile tab="validate" label="To validate" value={w.validate} />
-                <WaitTile tab="decide" label="Needs decision" value={w.decide} />
-                <WaitTile tab="manual" label="Manual" value={w.manual} />
-                <WaitTile tab="merge" label="Ready to merge" value={w.merge} note={w.held ? `${w.held} held` : null} />
+                <WaitTile tab="validate" label="To validate" value={w.validate} href={stage('validate').href} />
+                <WaitTile tab="decide" label="Needs decision" value={w.decide} href={stage('decide').href} />
+                <WaitTile tab="manual" label={workspace ? 'Blocked' : 'Manual'} value={w.manual} href={stage('manual').href} />
+                <WaitTile tab="merge" label={workspace ? 'Review later' : 'Ready to merge'} value={workspace ? w.parked : w.merge} href={workspace ? snap.reviewHref : stage('merge').href} note={w.held ? `${w.held} held` : null} />
               </div>
             </div>
           </div>
           <StatTile
             label="Pipeline working"
-            value={building + stage('queued').count}
-            lines={[`${building} building now`, `${stage('queued').count} in the fix queue`]}
+            value={building + stage('queued').count + (workspace ? stage('merge').count : 0)}
+            lines={workspace ? [`${building} investigating · ${stage('merge').count} verifying`, `${stage('queued').count} queued`] : [`${building} building now`, `${stage('queued').count} in the fix queue`]}
           />
           <StatTile
-            label={`Shipped, ${SHIPPED_TAB_DAYS} days`}
+            label={`${workspace ? 'Accepted' : 'Shipped'}, ${SHIPPED_TAB_DAYS} days`}
             value={stage('shipped').count}
             tone="done"
             lines={mounted
-              ? [`${pic.today.shipped.length} today`, `${pic.today.filed.length} new ticket${pic.today.filed.length === 1 ? '' : 's'} filed today`]
+              ? [`${pic.today.shipped.length} today`, `${pic.today.filed.length} new item${pic.today.filed.length === 1 ? '' : 's'} today`]
               : [' ', ' ']}
           />
         </section>
@@ -190,7 +200,7 @@ export default function LiveClient({ initial }) {
             <Legend looks={new Set(pic.nodes.map(lookOf))} filedToday={mounted && pic.today.filed.length > 0} />
           </div>
           <div data-flow className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6 xl:gap-5">
-            {COLUMNS.map((keys, i) => (
+            {(workspace ? [['validate'], ['queued'], ['building'], ['merge'], ['decide', 'manual'], ['shipped']] : COLUMNS).map((keys, i) => (
               <div key={keys.join('+')} className="relative flex min-w-0 flex-col gap-3">
                 {i > 0 && <Connector />}
                 {keys.map((k) => <StageColumn key={k} stage={stage(k)} nodeProps={nodeProps} now={now} />)}
@@ -199,14 +209,16 @@ export default function LiveClient({ initial }) {
           </div>
         </section>
 
+        {activity}
+
         <section className="mt-8 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <ShippedChart days={pic.shipped} mounted={mounted} />
-          <TodayPanel today={pic.today} mounted={mounted} nodeProps={nodeProps} />
+          <ShippedChart days={pic.shipped} mounted={mounted} workspace={workspace} />
+          <TodayPanel today={pic.today} mounted={mounted} nodeProps={nodeProps} workspace={workspace} />
         </section>
       </div>
 
       {detail && detailNode && (
-        <NodeDetail node={detailNode} rect={detail.rect} pinned={detail.pinned} now={now} onClose={close} />
+        <NodeDetail node={detailNode} rect={detail.rect} pinned={detail.pinned} now={now} onClose={close} workspace={workspace} />
       )}
     </div>
   );
@@ -240,10 +252,10 @@ function SyncPill({ sync, now, failed, mounted }) {
   );
 }
 
-function WaitTile({ tab, label, value, note }) {
+function WaitTile({ tab, label, value, note, href }) {
   return (
     <Link
-      href={cockpitHref(tab)}
+      href={href || cockpitHref(tab)}
       data-wait-tile={tab}
       className="flex min-h-[48px] items-center gap-2.5 rounded-xl bg-white/80 px-3 py-2 ring-1 ring-amber-200 transition-colors hover:bg-white hover:ring-amber-400"
     >
@@ -357,10 +369,10 @@ function StageColumn({ stage, nodeProps, now }) {
         {!nodes.length && <p className="text-xs text-gray-500">Nothing here right now.</p>}
       </div>
       <Link
-        href={cockpitHref(stage.key)}
+        href={stage.href || cockpitHref(stage.key)}
         className="mt-auto flex min-h-[36px] items-center justify-between border-t border-gray-100 px-3 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900"
       >
-        {more ? `${more} more on the cockpit` : 'Open on the cockpit'}
+        {stage.linkLabel || (more ? `${more} more on the cockpit` : 'Open on the cockpit')}
         <ChevronRightIcon className="h-4 w-4 text-gray-300" aria-hidden />
       </Link>
     </div>
@@ -391,11 +403,11 @@ function NodeGrid({ nodes, phoneCap = null, ...props }) {
  */
 function Node({ node, prefix, arrived, mounted, onShow, onHide, pinnedKey, hideOnPhone }) {
   const touch = useRef(false);
-  const label = prefix && node.key.startsWith(prefix) ? node.key.slice(prefix.length) : node.key;
+  const label = node.displayKey || (prefix && node.key.startsWith(prefix) ? node.key.slice(prefix.length) : node.key);
   return (
     <li className={hideOnPhone ? 'hidden sm:block' : undefined}>
       <Link
-        href={cockpitHref(node.stage, node.key)}
+        href={node.href || cockpitHref(node.stage, node.key)}
         data-live-node={node.key}
         data-turn={node.turn}
         aria-label={`${node.key}${node.held ? ' (held)' : ''}: ${node.status}`}
@@ -424,14 +436,14 @@ function Node({ node, prefix, arrived, mounted, onShow, onHide, pinnedKey, hideO
   );
 }
 
-function NodeDetail({ node, rect, pinned, now, onClose }) {
+function NodeDetail({ node, rect, pinned, now, onClose, workspace = false }) {
   const W = 288;
   const vw = typeof window === 'undefined' ? 1440 : window.innerWidth;
   const vh = typeof window === 'undefined' ? 900 : window.innerHeight;
   const left = Math.max(8, Math.min(rect.left + rect.width / 2 - W / 2, vw - W - 8));
   const below = rect.bottom + 8;
   const style = below + 170 > vh ? { left, bottom: vh - rect.top + 8, width: W } : { left, top: below, width: W };
-  const when = node.stage === 'shipped' ? (node.at ? `Merged ${ago(node.at, now)}` : null)
+  const when = node.stage === 'shipped' ? (node.at ? `${workspace ? 'Accepted' : 'Merged'} ${ago(node.at, now)}` : null)
     : node.stage === 'manual' ? (node.at ? `Stopped ${ago(node.at, now)}` : null)
       : (node.created ? `Filed ${ago(node.created, now)}` : null);
   return (
@@ -459,7 +471,7 @@ function NodeDetail({ node, rect, pinned, now, onClose }) {
           </p>
         )}
         {pinned ? (
-          <Link href={cockpitHref(node.stage, node.key)} className="mt-3 flex min-h-[40px] items-center justify-center gap-1 rounded-lg bg-gray-900 text-sm font-medium text-white">
+          <Link href={node.href || cockpitHref(node.stage, node.key)} className="mt-3 flex min-h-[40px] items-center justify-center gap-1 rounded-lg bg-gray-900 text-sm font-medium text-white">
             Open the card <ChevronRightIcon className="h-4 w-4" aria-hidden />
           </Link>
         ) : (
@@ -479,7 +491,8 @@ function niceMax(v) {
 }
 
 /** Shipped tickets per day (merge date on GitHub), one bar a day, today last. Days before the stored history are hatched. */
-function ShippedChart({ days, mounted }) {
+function ShippedChart({ days, mounted, workspace = false }) {
+  const outcome = workspace ? 'accepted' : 'shipped';
   const [hover, setHover] = useState(null);
   const max = niceMax(Math.max(0, ...days.map((d) => d.count)));
   const total = days.reduce((s, d) => s + d.count, 0);
@@ -489,7 +502,7 @@ function ShippedChart({ days, mounted }) {
   return (
     <figure data-shipped-chart className="rounded-2xl bg-white p-5 ring-1 ring-gray-200">
       <figcaption className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-sm font-semibold text-gray-900">Shipped per day</span>
+        <span className="text-sm font-semibold text-gray-900">{workspace ? 'Accepted per day' : 'Shipped per day'}</span>
         <span className="text-xs text-gray-500">{mounted ? `${total} in the last ${CHART_DAYS} days` : '\u00a0'}</span>
       </figcaption>
       <div className="relative mt-4" style={{ height: H + 24 }}>
@@ -508,7 +521,7 @@ function ShippedChart({ days, mounted }) {
               const date = new Date(d.start);
               const showTick = last || i % 2 === (days.length - 1) % 2;
               const firstTick = showTick && days.findIndex((x, j) => j % 2 === (days.length - 1) % 2) === i;
-              const label = `${date.toLocaleDateString(undefined, DAY_FMT)}: ${d.known ? `${d.count} shipped` : 'no record'}`;
+              const label = `${date.toLocaleDateString(undefined, DAY_FMT)}: ${d.known ? `${d.count} ${outcome}` : 'no record'}`;
               return (
                 <div
                   key={d.start}
@@ -547,7 +560,7 @@ function ShippedChart({ days, mounted }) {
                     <div role="tooltip" className={`pointer-events-none absolute bottom-full z-10 mb-1 w-max max-w-[220px] rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs text-white shadow-lg ${i > days.length / 2 ? 'right-0' : 'left-0'}`}>
                       <p className="font-medium">{date.toLocaleDateString(undefined, DAY_FMT)}</p>
                       <p className="text-gray-300">
-                        {!d.known ? 'Before this page\'s records' : `${d.count} shipped${d.count ? `: ${d.keys.slice(0, 4).join(', ')}${d.keys.length > 4 ? ` and ${d.keys.length - 4} more` : ''}` : ''}`}
+                        {!d.known ? 'Before this page\'s records' : `${d.count} ${outcome}${d.count ? `: ${d.keys.slice(0, 4).join(', ')}${d.keys.length > 4 ? ` and ${d.keys.length - 4} more` : ''}` : ''}`}
                       </p>
                     </div>
                   )}
@@ -558,27 +571,27 @@ function ShippedChart({ days, mounted }) {
         )}
       </div>
       <p className="mt-3 max-w-prose text-xs leading-relaxed text-gray-500">
-        Counted from each ticket&apos;s merge date on GitHub.
+        {workspace ? 'Accepted findings and applied guidelines, counted on the date of your decision.' : 'Counted from each ticket’s merge date on GitHub.'}
         {mounted && unknown > 0 ? ' Hatched days come before this page\'s records: no data, not zero.' : ''}
       </p>
     </figure>
   );
 }
 
-function TodayPanel({ today, mounted, nodeProps }) {
+function TodayPanel({ today, mounted, nodeProps, workspace = false }) {
   return (
     <div data-today className="self-start rounded-2xl bg-white p-5 ring-1 ring-gray-200">
       <p className="text-sm font-semibold text-gray-900">Today</p>
       <div className="mt-3 space-y-4">
         <div>
           <p className="mb-1.5 text-xs text-gray-600">
-            <span className="font-semibold tabular-nums text-gray-900">{mounted ? today.filed.length : ''}</span> filed on Jira today, still open
+            <span className="font-semibold tabular-nums text-gray-900">{mounted ? today.filed.length : ''}</span> {workspace ? 'items started today' : 'filed on Jira today, still open'}
           </p>
           {mounted && (today.filed.length ? <NodeGrid nodes={today.filed} {...nodeProps} /> : <p className="text-xs text-gray-500">None yet</p>)}
         </div>
         <div>
           <p className="mb-1.5 text-xs text-gray-600">
-            <span className="font-semibold tabular-nums text-gray-900">{mounted ? today.shipped.length : ''}</span> shipped today
+            <span className="font-semibold tabular-nums text-gray-900">{mounted ? today.shipped.length : ''}</span> {workspace ? 'accepted today' : 'shipped today'}
           </p>
           {mounted && (today.shipped.length ? <NodeGrid nodes={today.shipped} {...nodeProps} /> : <p className="text-xs text-gray-500">None yet</p>)}
         </div>

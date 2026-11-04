@@ -94,7 +94,8 @@ export class PassExecutor {
     run.notes.push(`Ran with instructions v${ins.version} (${shortDate(ins.at)}: ${ins.note}). Users-affected floor ${ins.knobs.minUsersAffected}; briefs ≈${ins.tokens} tokens.`);
     if (cur.warning) run.notes.push(`Instructions: ${cur.warning}.`);
     run.notes.push(`Pipeline "${p.name}" (${p.id}): sources ${p.sources.join(", ")}${p.signalTypes.length ? `, signal types ${p.signalTypes.join(", ")}` : ", every signal type"}.`);
-    const repos = codeContexts(cfg);
+    const repos = codeContexts(cfg).filter((r) => !p.repos || p.repos.includes(r.name));
+    if (p.repos && repos.length !== p.repos.length) throw new Error("A repository in this pipeline is unavailable. Reconnect it from Projects before running.");
     if (repos.length) {
       run.repos = repos;
       run.notes.push(`Code connected read-only: ${repos.map((r) => `${r.name} (${r.path}${r.commit ? ` at ${r.commit.slice(0, 10)}` : ""})`).join(", ")}. Agents may Read/Grep it; code pointers are re-checked against the files.`);
@@ -836,7 +837,7 @@ export function codeContexts(cfg: Config): CodeContext[] {
       /* not a git checkout: pointers still work, without a commit */
     }
     // The GitHub slug (for pointer links) is only known for the first repo, from the legacy github plugin config.
-    const slug = out.length === 0 && typeof ghRepo === "string" && ghRepo ? ghRepo : undefined;
+    const slug = r.issueRepo ?? (out.length === 0 && typeof ghRepo === "string" && ghRepo ? ghRepo : undefined);
     out.push({ name: r.name, path: root, ...(commit ? { commit } : {}), ...(slug ? { repo: slug } : {}), ...(r.notes ? { notes: r.notes } : {}) });
   }
   return out;

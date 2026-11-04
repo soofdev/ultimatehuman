@@ -36,6 +36,7 @@ export interface RunningServer {
   links: LoginLinks;
   broadcast(ev: unknown): void;
   loginUrl(): string;
+  close(): Promise<void>;
 }
 
 function cookie(req: IncomingMessage, name: string): string | undefined {
@@ -144,6 +145,13 @@ export function startServer(o: ServerOptions): Promise<RunningServer> {
           for (const c of clients) if (c.readyState === 1) c.send(s);
         },
         loginUrl: () => `http://${o.host}:${o.port}/login#code=${links.issue()}`,
+        close: () => new Promise<void>((done, fail) => {
+          // HTTP close does not close upgraded sockets. An open live/chat page
+          // must not keep the old engine alive during a local upgrade.
+          for (const client of clients) client.terminate();
+          wss.close();
+          server.close((error) => error ? fail(error) : done());
+        }),
       }),
     );
   });

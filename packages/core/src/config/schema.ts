@@ -55,6 +55,8 @@ const TelegramNotifierSchema = PluginInstanceSchema.extend({
 const RepoSchema = z.object({
   name: z.string().regex(/^[A-Za-z0-9._-]+$/, "letters, digits, dot, dash, underscore").describe("Short name shown as the repo badge on tickets"),
   path: z.string().describe("Absolute path of the local checkout"),
+  project: z.string().min(1).max(80).optional().describe("Product this repository belongs to; defaults to its repository name"),
+  issueRepo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe("GitHub owner/repository for this checkout"),
   testUrl: z.url().optional().describe("Staging/test URL for this repo's product, if any"),
   notes: z.string().optional().describe("Free-form notes the agents read about this repo"),
 });
@@ -219,7 +221,7 @@ export const ConfigSchema = z
       .object({
         telegram: z
           .object({
-            enabled: z.boolean().default(false).describe("Off by default. On: the daemon long-polls this bot; the first chat that writes to it is bound and every other chat is ignored"),
+            enabled: z.boolean().default(false).describe("Off by default. Connect Telegram pairs one private chat using an expiring link; every other chat is ignored"),
             botToken: SecretRef.optional().describe("From BotFather. A ${ENV_VAR} ref, never the token itself. Use a bot of its own: getUpdates allows one poller per bot"),
             apiBase: z.url().default("https://api.telegram.org").describe("Telegram Bot API base URL (point it at a local stub to test)"),
           })
@@ -231,7 +233,14 @@ export const ConfigSchema = z
     environments: z.array(EnvironmentSchema).default([]),
     pending: z.array(PendingSchema).default([]).describe("Setup steps skipped at install, with why they matter. Cleared automatically when done."),
   })
-  .strict();
+  .strict()
+  .superRefine((config, ctx) => {
+    const names = new Set(config.repos.map((r) => r.name));
+    if (names.size !== config.repos.length) ctx.addIssue({ code: "custom", path: ["repos"], message: "Repository names must be unique" });
+    for (const [i, p] of config.pipelines.entries()) {
+      if (p.repos?.some((name) => !names.has(name))) ctx.addIssue({ code: "custom", path: ["pipelines", i, "repos"], message: "Every scoped repository must be connected" });
+    }
+  });
 
 export type Config = z.infer<typeof ConfigSchema>;
 
