@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="510" viewBox="0 0 1200 510" role="img" aria-labelledby="title desc">
   <title id="title">ultimatehuman — Multiply your productivity by 80×. No AI slop. By design.</title>
-  <desc id="desc">The founder reports about 100 tickets reviewed in 5 hours. The 80× comparison uses 80 estimated workdays versus one day of human review in the founding workflow, not a benchmark of this release. AI investigates, evidence is checked, and a human decides.</desc>
+  <desc id="desc">The founder reports about 100 tickets reviewed in 5 hours. The 80× comparison uses 80 estimated workdays versus one day of human review in the founding workflow, not a benchmark of this release. The full workflow's rule: AI must prove its work succeeded before it asks for your attention. The current release provides investigation and human review; fixes and browser proof are future stages.</desc>
   <rect width="1200" height="510" rx="20" fill="#101712"/>
   <g font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">
     <rect x="44" y="36" width="36" height="36" rx="10" fill="#d3ff5f"/>
@@ -17,7 +17,7 @@
 
     <path d="M44 272H1156" stroke="#344437"/>
     <text x="42" y="344" fill="#f6f7f2" font-size="65" font-weight="750" letter-spacing="-2.5">No AI slop. By design.</text>
-    <text x="46" y="382" fill="#bac6b9" font-size="20">AI investigates. Evidence is checked. You make the call.</text>
+    <text x="46" y="382" fill="#d3ff5f" font-size="23" font-weight="600">AI must prove its work succeeded before it asks for your attention.</text>
     <rect x="44" y="411" width="1112" height="49" rx="6" fill="#d3ff5f"/>
     <text x="66" y="442" fill="#101712" font-size="20" font-weight="750" letter-spacing=".5">AI CANNOT APPROVE ITS OWN WORK.</text>
     <text x="46" y="490" fill="#9bab9e" font-size="13">Founder's reported workflow result · 80× uses an estimated historical baseline · Method and release scope below</text>
