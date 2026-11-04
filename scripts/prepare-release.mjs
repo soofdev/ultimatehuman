@@ -17,7 +17,7 @@ if (isPrivate) throw new Error("The CLI package is marked private");
 await rm(stage, { recursive: true, force: true });
 await mkdir(stage, { recursive: true });
 await cp(join(root, "packages/cli/dist"), join(stage, "dist"), { recursive: true });
-await cp(join(root, "LICENSE"), join(stage, "LICENSE"));
+for (const name of ["LICENSE", "NOTICE", "LICENSING.md"]) await cp(join(root, name), join(stage, name));
 await writeFile(join(stage, "package.json"), JSON.stringify(published, null, 2) + "\n");
 
 // npm has no repository-relative document or image resolver.

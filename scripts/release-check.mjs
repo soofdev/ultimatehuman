@@ -19,20 +19,24 @@ assert.equal(manifest.name, "ultimatehuman");
 assert.equal(manifest.scripts, undefined, "No install-time scripts");
 assert.equal(manifest.dependencies, undefined, "The bundle has no external runtime packages");
 assert.equal(manifest.devDependencies, undefined, "No workspace dependency references");
-assert.equal(manifest.license, "Apache-2.0");
+assert.equal(manifest.license, source.license, "Rebuild after changing the release license");
+assert.equal(manifest.license, JSON.parse(await readFile(join(root, "package.json"), "utf8")).license);
+for (const name of ["LICENSE", "NOTICE", "LICENSING.md"]) {
+  assert.equal(await readFile(join(stage, name), "utf8"), await readFile(join(root, name), "utf8"), `The package must include the current ${name}`);
+}
 
 const packed = JSON.parse((await exec("npm", ["pack", "--json", "--pack-destination", join(root, "dist")], { cwd: stage })).stdout)[0];
 const tarball = join(root, "dist", packed.filename);
 const files = new Set(packed.files.map((f) => f.path));
-for (const file of ["package.json", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.txt", "dist/cli.mjs", "dist/dashboard/index.html"]) {
+for (const file of ["package.json", "README.md", "LICENSE", "NOTICE", "LICENSING.md", "THIRD_PARTY_NOTICES.txt", "dist/cli.mjs", "dist/dashboard/index.html"]) {
   assert(files.has(file), `Missing package file: ${file}`);
 }
 for (const file of files) {
-  assert(/^(?:package\.json|README\.md|LICENSE|THIRD_PARTY_NOTICES\.txt|dist\/)/.test(file), `Unexpected file: ${file}`);
+  assert(/^(?:package\.json|README\.md|LICENSE|NOTICE|LICENSING\.md|THIRD_PARTY_NOTICES\.txt|dist\/)/.test(file), `Unexpected file: ${file}`);
   assert(!/(?:^|\/)(?:\.env[^/]*|engine\.env|control\.key|state\.db|\.DS_Store|node_modules|\.git)(?:\/|$)/.test(file), `Local state in package: ${file}`);
 }
 const readme = await readFile(join(stage, "README.md"), "utf8");
-assert(!/\]\((?:docs\/|LICENSE|CONTRIBUTING|ROADMAP)/.test(readme), "npm README needs absolute document links");
+assert(!/\]\((?:docs\/|LICENS(?:E|ING)|CONTRIBUTING|ROADMAP)/.test(readme), "npm README needs absolute document links");
 assert(!/src="docs\//.test(readme), "npm README needs absolute image links");
 console.log(`✓ Package contains CLI, dashboard, README, and licenses (${packed.files.length} files)`);
 

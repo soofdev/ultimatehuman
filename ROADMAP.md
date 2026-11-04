@@ -110,7 +110,7 @@ Compare it daily, for 14 days, against the issues that team actually confirmed.
 - **README:** a GIF of onboarding to the first finding.
 - **Docs site:** quickstart, plugin authoring guide, security model page.
 - **Datadog plugin:** fast-follow.
-- **Repo hygiene:** `CONTRIBUTING`, issue templates, Apache-2.0, a GitHub Actions CI (typecheck + fixture tests).
+- **Repo hygiene:** `CONTRIBUTING`, issue templates, PolyForm Noncommercial with separate commercial licenses, a GitHub Actions CI (typecheck + fixture tests).
 - **Release:** `0.1.0` on npm.
 
 **Acceptance:**
