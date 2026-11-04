@@ -229,6 +229,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const chatTelegram = new ChatTelegram({ store, chat, home, chatRoots, getConfig: () => config, configPath, log, emit, patch: async (p) => { await patchConfig((raw) => mergePatch(raw, p)); } });
 
   server = await startServer({
+    version: opts.version,
     host: config.server.host,
     port: config.server.port,
     staticDir: opts.staticDir,

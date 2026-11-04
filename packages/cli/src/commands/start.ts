@@ -6,8 +6,9 @@ import { startDaemon, ensureHome } from "@ultimatehuman/core";
 import { serviceInstalled } from "./service";
 import { bundledPlugins } from "../plugins";
 import type { GlobalFlags } from "../flags";
+import manifest from "../../package.json";
 
-export const VERSION = "0.1.0-slice";
+export const VERSION = manifest.version;
 
 export function dashboardDir(): string | null {
   const here = dirname(fileURLToPath(import.meta.url));

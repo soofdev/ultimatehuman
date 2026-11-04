@@ -1,7 +1,7 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
 import { parseArgs } from "node:util";
 import { init } from "./commands/init";
-import { start } from "./commands/start";
+import { start, VERSION } from "./commands/start";
 import { doctor } from "./commands/doctor";
 import { configCmd } from "./commands/config";
 import { dashboard } from "./commands/dashboard";
@@ -14,6 +14,7 @@ import { welcome } from "./commands/welcome";
 const USAGE = `ultimatehuman <command>
 
   (no command) Detect Claude and open the shared setup chat
+  --version   Print the installed version
 
   init        Detect Claude and set up through chat (--advanced keeps the original wizard)
   start       Run the engine in the foreground (dashboard on 127.0.0.1:4747)
@@ -39,6 +40,10 @@ pass --non-interactive to take the detected defaults instead of prompting.`;
 
 async function main(argv: string[]): Promise<number> {
   let [command, ...rest] = argv;
+  if (command === "--version" || command === "-v" || command === "version") {
+    console.log(VERSION);
+    return 0;
+  }
   if (!command || (command.startsWith("--") && command !== "--help")) { rest = argv; command = "welcome"; }
   const { values, positionals } = parseArgs({
     args: rest,

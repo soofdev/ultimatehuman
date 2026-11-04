@@ -1,11 +1,22 @@
 {
   "name": "ultimatehuman",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
-  "files": ["dist"],
-  "engines": { "node": ">=22" },
+  "files": ["dist", "LICENSE", "THIRD_PARTY_NOTICES.txt"],
+  "engines": { "node": ">=22.13.0" },
+  "os": ["darwin", "linux"],
   "type": "module",
-  "description": "CLI: init (wizard), start, doctor, config get/set, dashboard, service install.",
+  "description": "AI investigates. You decide. Turn production signals and repository code into evidence-backed engineering reviews, using Claude Code.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vincent38wargnier/ultimatehuman.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/vincent38wargnier/ultimatehuman#readme",
+  "bugs": { "url": "https://github.com/vincent38wargnier/ultimatehuman/issues" },
+  "keywords": ["claude-code", "ai", "engineering", "bug-detection", "code-review", "posthog", "datadog", "self-hosted"],
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "bin": {
     "ultimatehuman": "./dist/cli.mjs"
   },
