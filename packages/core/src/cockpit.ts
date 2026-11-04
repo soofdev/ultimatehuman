@@ -25,6 +25,8 @@ export interface CockpitCard {
   title: string;
   /** The ruling in force; null = waiting for one. */
   ruling: Ruling | null;
+  /** Last decision event, including reopen/resurface; used to reject stale browser decisions. */
+  decisionRevision?: number;
   /** Set when the radar brought the item back since the last human ruling. */
   resurfaced?: { at: string; note?: string };
   history: HistoryEntry[];
@@ -136,7 +138,7 @@ export function buildCockpit(store: Store, active: RunRecord | null, opts: { dry
     if (f.refreshedBy) history.push({ at: f.refreshedBy.at, kind: "refreshed", by: "radar", label: "Impact refreshed by a later pass" });
     history.push(...rulingHistory(rs), ...passHistory(runs, cid));
     history.sort((a, b) => a.at.localeCompare(b.at));
-    cards.push({ kind: "finding", clusterId: cid, pipelineId: pipelineOfFinding(f), title: f.title, ...current(rs), history, finding: f });
+    cards.push({ kind: "finding", clusterId: cid, pipelineId: pipelineOfFinding(f), title: f.title, ...current(rs), decisionRevision: rs.at(-1)?.id ?? 0, history, finding: f });
   }
 
   // Dropped drafts: the latest drop per cluster, across recent runs.

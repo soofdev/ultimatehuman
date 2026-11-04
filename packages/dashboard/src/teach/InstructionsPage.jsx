@@ -234,7 +234,7 @@ function Rails({ rails }) {
   );
 }
 
-function ConfigFile() {
+export function ConfigFile() {
   const [c, setC] = useState(null);
   useEffect(() => {
     void engineCall('/api/config').then(setC);
@@ -330,7 +330,7 @@ function ModelsPanel() {
 
 // Optional behaviour: every flag defaults off, and off = behaviour identical.
 const FEATURE_LABEL = { validationGate: 'Validation gate', fixLoop: 'Fix loop', ledger: 'Ledger' };
-function FeaturesPanel() {
+export function FeaturesPanel() {
   const [f, setF] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -404,7 +404,7 @@ export function GradeBadge({ grade, onClick }) {
   );
 }
 
-function GradePanel({ grade }) {
+export function GradePanel({ grade }) {
   if (!grade) return null;
   return (
     <div className="space-y-4">

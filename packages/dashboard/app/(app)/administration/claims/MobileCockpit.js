@@ -255,7 +255,7 @@ export function PhoneCockpit({ tab, tabs, counts, onTab, filterActive, renderFil
         </div>
       </div>
       {sheet === 'tabs' && (
-        <Sheet title="Pipeline" label="tabs" onClose={close}>
+        <Sheet title="Review" label="tabs" onClose={close}>
           <ul className="-mx-1 pb-2">
             {tabs.map((t) => {
               const active = t.key === tab;

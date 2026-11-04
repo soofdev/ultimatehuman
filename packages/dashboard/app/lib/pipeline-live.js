@@ -41,6 +41,10 @@ const byKey = (a, b) => a.key.localeCompare(b.key, 'en', { numeric: true });
 /** The stage a ticket sits on, or null when it is on none (left the queues, dismissed, merged away...). */
 export function stageOf(t, now = Date.now()) {
   if (!t?.key) return null;
+  if (t.live_stage && STAGES.some((s) => s.key === t.live_stage)) {
+    if (t.live_stage === 'shipped' && (ms(t.merged_at) ?? 0) < now - SHIPPED_TAB_DAYS * DAY) return null;
+    return t.live_stage;
+  }
   switch (t.queue) {
     case 'backlog':
       if (t.merged_into) return null;
@@ -64,6 +68,7 @@ export function stageOf(t, now = Date.now()) {
  * { turn: 'you' | 'pipeline' | 'done' | 'parked', status }.
  */
 export function ticketState(t, stage) {
+  if (t.live_state) return t.live_state;
   const prs = (t.prs || []).length;
   const prsText = `${prs} PR${prs === 1 ? '' : 's'}`;
   const round = t.fix_round?.stage;
@@ -112,7 +117,7 @@ function dayStart(t) {
  *   `known: false` on the days before the stored history;
  * - today: tickets filed today (Jira created) and shipped today.
  */
-export function livePicture(tickets, now = Date.now()) {
+export function livePicture(tickets, now = Date.now(), stageDefinitions = STAGES) {
   const today = dayStart(now);
   const nodes = [];
   for (const t of tickets || []) {
@@ -133,10 +138,12 @@ export function livePicture(tickets, now = Date.now()) {
       // the moment the stage is about: merged, stopped, filed
       at: stage === 'shipped' ? ms(t.merged_at) : (stage === 'manual' ? ms(t.manual?.stopped_at) : created),
       flags: (t.flags || []).map((f) => f.label).filter(Boolean),
+      href: t.live_href || null,
+      displayKey: t.displayKey || (t.live_stage ? `${t.key.split('-')[0]}-${t.key.slice(-6)}` : null),
     });
   }
 
-  const stages = STAGES.map((s) => {
+  const stages = stageDefinitions.map((s) => {
     const list = nodes.filter((n) => n.stage === s.key);
     // newest merge first on Shipped; elsewhere: his turn first, oldest filed first
     // (undated last), then by key
@@ -153,12 +160,13 @@ export function livePicture(tickets, now = Date.now()) {
   const mine = nodes.filter((n) => n.turn === 'you');
   const oldest = mine.filter((n) => n.created != null).sort((a, b) => a.created - b.created)[0] || null;
   const waiting = {
-    total: countOf('validate') + countOf('merge') + countOf('decide') + countOf('manual'),
+    total: stageDefinitions === STAGES ? countOf('validate') + countOf('merge') + countOf('decide') + countOf('manual') : mine.length,
     validate: countOf('validate'),
     merge: countOf('merge'),
     held: nodes.filter((n) => n.held).length,
     decide: countOf('decide'),
     manual: countOf('manual'),
+    parked: nodes.filter((n) => n.turn === 'parked').length,
     oldest,
   };
 

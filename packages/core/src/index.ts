@@ -3,7 +3,7 @@ export { loadConfig, writeConfig, resolveSecretRefs, defaultConfigPath, describe
 export { getPath, setPath } from "./config/paths";
 export { uhHome, ensureHome, controlKey, homeId } from "./home";
 export { WindowTracker } from "./governor/tracker";
-export { runClaude, parseRateLimit, claudeBin, type RateLimitReading } from "./runner/claude";
+export { runClaude, parseRateLimit, claudeBin, claudeEnv, type RateLimitReading } from "./runner/claude";
 export { readOnlyHttp, outboundHttp, notifyHosts } from "./plugins/http";
 export { Notifier } from "./notify/notifier";
 export { renderFindingCard, chromeBin } from "./notify/card-png";
@@ -19,5 +19,6 @@ export { startDaemon, type DaemonHandle } from "./daemon";
 export { gradeSetup, gradeProbes, CI_WORKFLOW_PATH, TIERS, type SetupGrade, type Tier } from "./setup/grade";
 export { extractSends } from "./chat/files";
 export { scanRepo, detectFramework, type Detection, type TrackerId, type Framework } from "./setup/scan";
+export { inspectRepository, connectRepository, type RepositoryDiscovery } from "./setup/discovery";
 export { isResolved, resolvedItems, setupStatusText } from "./setup/pending";
 export { engineEnvPath, readEnvFile, writeEnvFile, setEngineEnv, loadEngineEnv } from "./envfile";

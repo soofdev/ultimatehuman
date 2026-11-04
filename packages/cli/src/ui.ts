@@ -18,7 +18,7 @@ const pad = (s: string) => s + " ".repeat(Math.max(1, LABEL_W - s.length));
 export function banner(version: string): void {
   console.log("");
   console.log(`  ${c.accent("◆")} ${c.bold("ultimatehuman")} ${c.muted(version)}`);
-  console.log(`  ${c.muted("Self-hosted bug radar. The AI can look, never touch.")}`);
+  console.log(`  ${c.muted("Engineering review. Evidence first. Your judgment, always.")}`);
 }
 
 let stage = 0;

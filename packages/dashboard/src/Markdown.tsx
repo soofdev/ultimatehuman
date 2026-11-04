@@ -8,7 +8,12 @@ function inline(s: string, key = 0): ReactNode[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(s))) {
     if (m.index > last) out.push(s.slice(last, m.index));
-    if (m[1]) out.push(<a key={`${key}-${m.index}`} href={m[2]} target="_blank" rel="noreferrer">{/^`[^`]+`$/.test(m[1]) ? <code>{m[1].slice(1, -1)}</code> : m[1]}</a>);
+    if (m[1]) {
+      const href = m[2] || "";
+      const safe = /^https?:\/\//i.test(href) || /^\/(?!\/)/.test(href) || href.startsWith("#");
+      const label = /^`[^`]+`$/.test(m[1]) ? <code>{m[1].slice(1, -1)}</code> : m[1];
+      out.push(safe ? <a key={`${key}-${m.index}`} href={href} {...(/^https?:/.test(href) ? { target: "_blank", rel: "noreferrer" } : {})}>{label}</a> : <Fragment key={`${key}-${m.index}`}>{label}</Fragment>);
+    }
     else if (m[3]) out.push(<b key={`${key}-${m.index}`}>{m[3]}</b>);
     else if (m[4]) out.push(<code key={`${key}-${m.index}`}>{m[4]}</code>);
     last = m.index + m[0].length;
@@ -23,7 +28,14 @@ export function Markdown({ text }: { text: string }) {
   let i = 0;
   while (i < lines.length) {
     const l = lines[i]!;
-    if (l.startsWith("## ")) blocks.push(<h2 key={i}>{l.slice(3)}</h2>), i++;
+    if (/^\s*```/.test(l)) {
+      const start = i++, code: string[] = [];
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i]!)) code.push(lines[i++]!);
+      if (i < lines.length) i++;
+      blocks.push(<pre key={start} className="md-code"><code>{code.join("\n")}</code></pre>);
+    }
+    else if (l.startsWith("### ")) blocks.push(<h3 key={i}>{inline(l.slice(4), i)}</h3>), i++;
+    else if (l.startsWith("## ")) blocks.push(<h2 key={i}>{inline(l.slice(3), i)}</h2>), i++;
     else if (l.trim() === "---") blocks.push(<hr key={i} />), i++;
     else if (l.startsWith("> ")) {
       const q: string[] = [];

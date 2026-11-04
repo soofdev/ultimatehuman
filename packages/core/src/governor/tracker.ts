@@ -29,7 +29,7 @@ export class WindowTracker {
     private readonly store: Store,
     private readonly sourceId: string,
     private readonly sourceKind: "subscription" | "api_key",
-    private readonly humanReservePct: number,
+    private humanReservePct: number,
   ) {
     const saved = store.getKv<RateLimitReading>(`window:${sourceId}`);
     if (saved) this.latest.set(sourceId, saved);
@@ -43,6 +43,10 @@ export class WindowTracker {
 
   reading(): RateLimitReading | undefined {
     return this.latest.get(this.sourceId);
+  }
+
+  setReserve(percent: number): void {
+    this.humanReservePct = percent;
   }
 
   isStale(staleAfterMin: number): boolean {

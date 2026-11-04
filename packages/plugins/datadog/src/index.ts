@@ -146,7 +146,7 @@ export default definePlugin({
         secret: true,
         preferredEnv: "DATADOG_APP_KEY",
         alternateEnv: ["DD_APP_KEY", "DD_APPLICATION_KEY"],
-        helpUrl: "https://app.datadoghq.com/personal-settings/application-keys",
+        helpUrl: "https://app.datadoghq.com/organization-settings/application-keys",
         helpText: `Scoped Application key with only: ${DATADOG_SCOPES.join(", ")}.`,
       },
       {

@@ -207,7 +207,7 @@ function PipelineCard({ p, data, onChanged, onOpenInstructions }) {
   );
 }
 
-function AddPanel({ data, onChanged }) {
+export function AddPanel({ data, onChanged, compact = false }) {
   const [blank, setBlank] = useState({ id: '', name: '' });
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
@@ -227,9 +227,9 @@ function AddPanel({ data, onChanged }) {
     }
   };
   return (
-    <section data-add-pipeline className={CARD}>
-      <h2 className="text-base font-semibold text-gray-900">Add a pipeline</h2>
-      <p className="mt-1 text-sm text-gray-600">Templates are suggestions: adding one copies its settings and briefs into your config, and from then on every word is yours to change.</p>
+    <section data-add-pipeline className={compact ? 'uh-add-pipeline' : CARD}>
+      {!compact && <><h2 className="text-base font-semibold text-gray-900">Add a pipeline</h2>
+      <p className="mt-1 text-sm text-gray-600">Templates are suggestions: adding one copies its settings and briefs into your config, and from then on every word is yours to change.</p></>}
       <ul className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {data.templates.map((t) => {
           const id = freeId(t.id);
@@ -237,19 +237,21 @@ function AddPanel({ data, onChanged }) {
             <li key={t.id} data-template={t.id} className="flex flex-col rounded-lg border border-gray-200 p-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-gray-900">{t.name}</span>
-                <span className="font-mono text-xs text-gray-500">{t.id}</span>
+                {!compact && <span className="font-mono text-xs text-gray-500">{t.id}</span>}
                 {taken.has(t.id) && <span className={`${PILL} bg-gray-50 text-gray-500 ring-gray-200`}>in use</span>}
               </div>
               <p className="mt-1 flex-1 text-sm text-gray-600">{t.description}</p>
               <div className="mt-2">
                 <button type="button" data-add-template={t.id} disabled={busy !== null} onClick={() => add(t.id, { template: t.id, id, name: id === t.id ? t.name : `${t.name} ${id.split('-').pop()}` }, `${t.name} added as "${id}" from its template. Its briefs are in Config > Instructions.`)} className={BTN_SOFT}>
-                  <PlusIcon className="h-4 w-4" aria-hidden />{busy === t.id ? 'Adding…' : `Add from template${id !== t.id ? ` as ${id}` : ''}`}
+                  <PlusIcon className="h-4 w-4" aria-hidden />{busy === t.id ? 'Adding…' : compact ? 'Add pipeline' : `Add from template${id !== t.id ? ` as ${id}` : ''}`}
                 </button>
               </div>
             </li>
           );
         })}
       </ul>
+      <details className="mt-4" open={!compact || undefined}>
+      <summary className="cursor-pointer text-sm text-gray-600">Create custom pipeline</summary>
       <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-gray-100 pt-4">
         <Field label="Blank pipeline id"><input data-blank-id className={`mt-1 w-48 font-mono ${INPUT}`} placeholder="e.g. perf-watch" value={blank.id} onChange={(e) => setBlank((b) => ({ ...b, id: e.target.value }))} /></Field>
         <Field label="Name"><input data-blank-name className={`mt-1 w-56 ${INPUT}`} placeholder="e.g. Performance watch" value={blank.name} onChange={(e) => setBlank((b) => ({ ...b, name: e.target.value }))} /></Field>
@@ -257,6 +259,7 @@ function AddPanel({ data, onChanged }) {
           <PlusIcon className="h-4 w-4" aria-hidden />Add blank
         </button>
       </div>
+      </details>
       {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{error}</p>}
     </section>
   );

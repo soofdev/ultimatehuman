@@ -8,6 +8,7 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly detail?: any,
   ) {
     super(message);
   }
@@ -15,7 +16,7 @@ export class ApiError extends Error {
 
 export async function get<T = any>(path: string): Promise<T> {
   const r = await fetch(path, { credentials: "same-origin" });
-  if (!r.ok) throw new ApiError(r.status, (await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  if (!r.ok) { const detail = await r.json().catch(() => ({})); throw new ApiError(r.status, detail.error ?? `HTTP ${r.status}`, detail); }
   return r.json();
 }
 
@@ -26,7 +27,7 @@ export async function post<T = any>(path: string, body: unknown = {}): Promise<T
     headers: { "content-type": "application/json", "x-uh-csrf": csrf },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new ApiError(r.status, (await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  if (!r.ok) { const detail = await r.json().catch(() => ({})); throw new ApiError(r.status, detail.error ?? `HTTP ${r.status}`, detail); }
   return r.json();
 }
 
@@ -37,6 +38,7 @@ export async function redeemLoginFragment(): Promise<"ok" | "none" | string> {
   history.replaceState(null, "", "/login");
   try {
     await post("/api/auth/redeem", { code });
+    history.replaceState(null, "", "/chat");
     return "ok";
   } catch (e) {
     return (e as Error).message;

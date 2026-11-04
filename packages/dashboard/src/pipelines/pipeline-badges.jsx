@@ -38,7 +38,7 @@ export function enhancePipelineBadges({ pipelineOf, pipelines, counts }) {
     filterBar();
   };
   const filterBar = () => {
-    const h1 = [...document.querySelectorAll('header h1')].find((h) => h.textContent.trim() === 'Pipeline');
+    const h1 = document.querySelector('[data-review-title]') || [...document.querySelectorAll('header h1')].find((h) => h.textContent.trim() === 'Pipeline');
     const header = h1?.closest('header');
     if (!header || header.querySelector('[data-pipeline-filter]') || !pipelines().length) return;
     const current = new URLSearchParams(window.location.search).get('pipeline') || '';

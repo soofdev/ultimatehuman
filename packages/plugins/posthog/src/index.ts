@@ -131,7 +131,7 @@ export default definePlugin({
         preferredEnv: "POSTHOG_PERSONAL_API_KEY",
         alternateEnv: ["POSTHOG_API_KEY"],
         helpUrl: "https://app.posthog.com/settings/user-api-keys",
-        helpText: "Create a personal API key with read-only scopes: Query, Session recording, Error tracking, Project.",
+        helpText: "Create a personal API key with read-only scopes: Query, Session recording, Error tracking, Project, Organization member.",
         pattern: "^phx_[A-Za-z0-9]+$",
       },
       {

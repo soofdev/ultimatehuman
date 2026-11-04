@@ -2000,7 +2000,7 @@ function ManualList({ tickets, onUpdate, empty }) {
 
 function Empty({ children, wide = false }) {
   return (
-    <p className={`${wide ? 'col-span-full ' : ''}rounded-xl border border-dashed border-gray-300 bg-white px-4 py-10 text-center text-sm text-gray-500`}>{children}</p>
+    <p data-review-empty className={`${wide ? 'col-span-full ' : ''}rounded-xl border border-dashed border-gray-300 bg-white px-4 py-10 text-center text-sm text-gray-500`}>{children}</p>
   );
 }
 
@@ -2194,14 +2194,14 @@ export default function CockpitClient({ initialClaims, initialTickets, initialBu
       <div className="px-4 pb-10 pt-16 sm:px-8 md:pt-8">
         <header>
           <div className="flex items-center justify-between gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">Pipeline</h1>
+            <h1 data-review-title className="text-2xl font-bold text-gray-900">Review</h1>
             <Link href="/administration/pipeline-live" data-live-link className="inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full bg-white px-3.5 text-sm font-medium text-gray-700 ring-1 ring-gray-200 transition-colors hover:bg-gray-100 hover:text-gray-900">
               <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
               Live view
             </Link>
           </div>
           <p className="mt-1 text-sm text-gray-600">
-            What the bug pipeline needs from you: MAX fixes to validate, fixes to review and merge on GitHub, decisions to make, tickets stopped over budget to run by hand, claims to rule on.
+            Review the evidence. Validate, redirect, or reject the proposed work.
           </p>
         </header>
 

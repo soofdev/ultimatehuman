@@ -27,6 +27,8 @@ export const PipelineSchema = z
     description: z.string().max(500).default("").describe("What this pipeline looks for, in a sentence"),
     enabled: z.boolean().default(true).describe("Off: never scheduled; Run now still works"),
     template: z.string().optional().describe("The template it was created from. Informational only: nothing is read from the template after creation"),
+    repos: z.array(z.string().min(1)).min(1).optional().describe("Repository names this pipeline may read. Omitted for legacy workspace-wide pipelines."),
+    timezone: z.string().refine((v) => { try { new Intl.DateTimeFormat("en", { timeZone: v }); return true; } catch { return false; } }, "Use an IANA timezone, such as America/New_York").optional().describe("Schedule timezone; defaults to the engine's local timezone"),
     schedule: z
       .string()
       .default("0 7 * * *")

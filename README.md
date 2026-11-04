@@ -1,13 +1,13 @@
 # ultimatehuman
 
-**A self-hosted bug radar: it reads your Sentry and PostHog, finds the real product problems behind the noise, and files evidence-rich GitHub issues. Then a human takes it from there.**
+**A local engineering review workspace. Connect a Git repository, discover useful investigations, and review findings with their evidence before deciding what deserves action.**
 
 ## Kill AI slop: the AI can look, never touch
 
 Most AI dev tools write code nobody asked for and claim it works. ultimatehuman starts from the opposite end:
 
 - **Read-only access.** It connects to your trackers with read-only credentials.
-- **Issues only.** The one thing it writes is an issue in a single repo you choose.
+- **Explicit decisions.** Accept, dismiss with a reason, or set a finding aside. Accepted findings stay local; export a Markdown issue draft for your team. Live issue publishing is not implemented in this build.
 - **Evidence or nothing.** Every finding cites real events with links you can click, and it says plainly what is not known yet. "No clear problems found" is a valid answer; it never pads a list.
 - **Fixes prove themselves (planned).** When fixes arrive in v2, they come as pull requests that must reproduce the bug and then prove the fix in a real browser on your test environment, examined like a hostile reviewer would.
 - **Humans stay in charge.** A human merges, and a human deploys.
@@ -20,8 +20,8 @@ agents apply), and per-pipeline model and gate overrides. One generic runtime ru
 pass at a time. Two templates ship as suggestions: **bug-radar** (trackers and analytics in,
 root-caused user-facing bugs out) and **security-check** (a daily read-only audit of the watched
 repos: committed secrets, risky dependencies, auth patterns). Adding a template copies it into your
-config; from then on you edit, disable, delete or add pipelines in Config > Pipelines, through the
-setup chat, or by hand. Any tool can also enqueue a ticket with `POST /api/findings`
+config; from then on you configure repository scope, sources, schedules, and guidelines through
+**Chat**, the CLI, or the config file. Any tool can also enqueue a ticket with `POST /api/findings`
 (`docs/tickets-api.md`).
 
 ## Quick start
@@ -33,38 +33,104 @@ git clone https://github.com/vincent38wargnier/ultimatehuman.git && cd ultimateh
 bash scripts/bootstrap.sh      # Node 22 via nvm if missing -> pnpm -> install -> build -> init
 ```
 
-`bootstrap.sh` is idempotent and never uses sudo (`--no-init` stops after the build). `init` asks
-which repos to watch, scans their dependency manifests for Sentry/PostHog/Datadog SDKs and offers
-to paste a read-only key for each one it finds (saved to `~/.ultimatehuman/engine.env`, 0600; the
-config only holds `${ENV}` refs), asks for a staging URL, and ends on your setup grade plus a
-**pending** list of what you skipped. Nothing is required past a repo and Claude Code: with no
-error tracker at all it offers to write a minimal Sentry init on a new branch of your repo.
-Add a skipped key later with `ultimatehuman key <ENV_NAME>`; the engine picks it up within a minute.
-Then:
+`bootstrap.sh` is idempotent and never uses sudo (`--no-init` stops after the build).
+The default CLI detects Claude Code and verifies the existing AI account with a small model request
+**before asking for repositories or integrations**. It opens one shared setup conversation in the browser.
+Claude asks for a Git repository, inspects its tracked files, identifies test tooling and tracking SDKs,
+and suggests the existing pipeline templates. It asks one question at a time and applies configuration
+through the engine's validated handlers. The installation directory is context, not an automatically added repository.
+
+For an existing development checkout:
+
+```sh
+npx --yes pnpm@11.10.0 install
+npx --yes pnpm@11.10.0 build
+node packages/cli/dist/cli.mjs
+```
+
+The browser has four destinations:
+
+- **Chat**: setup and configuration, using your existing Claude CLI account. Repository discovery,
+  source verification, pipeline creation and runs, schedules, and versioned guideline edits happen here.
+- **Setup**: project progress, connected repositories, tracking suggestions, and pipeline readiness.
+  Each next step opens chat with the project context.
+- **Pipeline live**: the original system overview, with queued work, active agents, evidence checks,
+  blockers, and human decisions.
+- **Review**: the original cockpit for inspecting evidence and validating or rejecting findings.
+
+The chat composer lists models from your installed Claude Code, with Opus 5.5 selected by default.
+Changing it affects new chat messages only; pipeline models keep their saved settings.
+
+Pipeline defaults are unchanged: Security check runs daily at 06:30 with up to three findings;
+Bug radar runs daily at 07:00 with up to five. Existing scopes, sources, schedules, models, and limits
+are preserved unless you ask to change them. Without tracking, a repository-only Security check is available.
+SDK detection is separate from verified source access. Chat can install instrumentation when requested;
+native shell and file-edit approvals appear inside the conversation.
+
+If the existing Claude session has expired, run `claude auth login` in a terminal and use **Check connection**.
+Keys are saved through `ultimatehuman key ENV_NAME`, never pasted into chat. The **Connect Telegram** button
+verifies a bot token and provides a private pairing link. Telegram, browser chat, and the CLI share one conversation.
+
+```sh
+node packages/cli/dist/cli.mjs --repos ~/code/my-project --no-open
+node packages/cli/dist/cli.mjs --repos https://github.com/team/project --no-open
+node packages/cli/dist/cli.mjs --no-open          # continue setup in terminal chat
+node packages/cli/dist/cli.mjs chat               # resume the shared conversation
+node packages/cli/dist/cli.mjs init --advanced    # retain the original terminal setup wizard
+```
+
+Run the default command again to resume the same workspace and conversation. Then:
 
 ```sh
 node packages/cli/dist/cli.mjs dashboard          # one-time login link to the local dashboard
-node packages/cli/dist/cli.mjs service install    # keep it running (systemd / launchd), daily pass at 07:00
+node packages/cli/dist/cli.mjs service install    # keep the engine running (systemd / launchd)
 node packages/cli/dist/cli.mjs ci install         # optional: the PR review check, see docs/ci-check.md
 ```
 
-(`npx ultimatehuman init` once the package is published.)
+The CLI package includes the built dashboard and has no workspace runtime dependencies.
+`npx ultimatehuman@latest` is the intended entry point once the package is published.
+Local development does not publish or install an OS service automatically.
+
+To keep a local preview separate from your regular configuration:
+
+```sh
+ULTIMATEHUMAN_HOME=/tmp/ultimatehuman-preview \
+ULTIMATEHUMAN_CONFIG=/tmp/ultimatehuman-preview/config.json5 \
+node packages/cli/dist/cli.mjs --repos "$PWD" --port 4750
+```
+
+### Verification
+
+```sh
+npx --yes pnpm@11.10.0 typecheck
+npx --yes pnpm@11.10.0 build
+node scripts/workspace-check.mjs
+node scripts/chat-check.mjs
+```
+
+The integration check exercises fresh and repeat CLI launches, existing-account verification,
+expired-session recovery without resetting setup, project isolation, real runtime progress,
+live flow states, decisions, version conflicts, concurrent configuration writes, bundled assets, and
+timezone scheduling. Chat checks cover initialization, shared Claude sessions, actual configuration
+operations, original template defaults, guideline conflicts, and private Telegram pairing. They use
+temporary Git repositories, a deterministic model fixture, and a local Telegram stub;
+they make no paid model calls or external issue writes. `UH_KEEP_FIXTURE=1` retains isolated engines for browser testing.
 
 ## Configure
 
-One file, `~/.ultimatehuman/config.json5` (see `config.example.json5`), editable by hand or in the dashboard's **Config** page:
+One file, `~/.ultimatehuman/config.json5` (see `config.example.json5`), editable by hand or through **Chat**:
 
-- **`repos`**: the local checkouts the agents read, `[{ name, path, testUrl?, notes? }]`. Each repo keeps its own git/GitHub auth; every finding carries a repo badge.
-- **`models`**: one model per leg type (radar, review, retrospective, and the future fix/exam/chat/intake/bundle legs). Default `claude-opus-5-5`; Config > Models has a dropdown per leg.
-- **`features`**: everything optional, every flag off by default, and off behaves exactly like a build without the feature. First real toggle: `validationGate` (new findings wait in *Awaiting validation* until you promote them).
-- **Setup grade**: Bronze to Platinum, computed from the config, with "what unlocks the next tier" in Config > Setup grade. Spec: [docs/setup-grade.md](docs/setup-grade.md).
+- **`repos`**: local checkouts, `[{ name, path, project?, issueRepo?, testUrl?, notes? }]`. Group related repositories into a project. Each pipeline keeps an explicit `repos` scope; legacy pipelines without one retain their existing workspace scope.
+- **`models`**: per-stage models, including investigation, evidence review, retrospective, and chat.
+- **`pipelines`**: objectives, source selection, repository scope, schedule, and timezone. Versioned guidelines supply each pipeline's detailed investigation rules.
+- **Full configuration**: the engine's existing schema, features, models, and defaults remain available through chat and the CLI. Old configuration URLs open chat. Pipeline live and the original cockpit keep their original URLs.
 
 ## What you need
 
 - **Node 22+** (bootstrap installs it)
 - **A Claude Code login** on the machine. An API key works too, for extra capacity.
 - **Sources (optional, one is enough):** PostHog, Datadog (error logs + error events, read-only Application key: `logs_read_data`, `logs_read_index_data`, `events_read`; site `datadoghq.com` or `datadoghq.eu`), Sentry (plugin probe still a stub in this build).
-- **Optional:** a GitHub token for issue previews. The pipeline keeps its own tickets without it.
+- **No GitHub token required:** findings and issue drafts are local. Connecting a private repository uses your existing Git authentication.
 
 ## Plays nice with your own Claude usage
 

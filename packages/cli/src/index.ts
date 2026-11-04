@@ -9,16 +9,20 @@ import { service, serviceInstalled } from "./commands/service";
 import { ci } from "./commands/ci";
 import { chat } from "./commands/chat";
 import { key } from "./commands/key";
+import { welcome } from "./commands/welcome";
 
 const USAGE = `ultimatehuman <command>
 
-  init        Detect keys, probe each source, start the first radar pass
+  (no command) Detect Claude and open the shared setup chat
+
+  init        Detect Claude and set up through chat (--advanced keeps the original wizard)
   start       Run the engine in the foreground (dashboard on 127.0.0.1:4747)
   doctor      Check config, credentials, scopes and service; --fix repairs
   config      get <path> | set <path> <value> | schema
   dashboard   Print a single-use dashboard login link
   chat        The setup chat (same conversation as the dashboard Chat page and Telegram);
               chat "<message>" sends one message and prints the reply
+  telegram    Pair this conversation with your Telegram bot
   stop        Stop the engine started by init
   service     install | uninstall | status (systemd user unit / launchd agent)
   ci          install [--repo <name|path>] [--base main] [--runner-label <label>] [--model <id>] [--force]
@@ -27,19 +31,23 @@ const USAGE = `ultimatehuman <command>
   key         <ENV_NAME> saves one secret into the engine env file (prompted, never echoed);
               a pending tracker key is picked up by the running engine within a minute
 
-Every interactive step has a flag (init: --repos <path,path>, --pipelines <template,template>, --test-url <url>,
+Repository setup: --repos <path-or-url,path-or-url> --port <n> --no-open
+Full setup (init): --pipelines <template,template>, --test-url <url>,
 --project <posthog id>, --repo owner/name, --notify-prefix <text>, --notify-server <url>,
---port <n>);
+--port <n>;
 pass --non-interactive to take the detected defaults instead of prompting.`;
 
 async function main(argv: string[]): Promise<number> {
-  const [command, ...rest] = argv;
+  let [command, ...rest] = argv;
+  if (!command || (command.startsWith("--") && command !== "--help")) { rest = argv; command = "welcome"; }
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,
     strict: false,
     options: {
       "non-interactive": { type: "boolean" },
+      "no-open": { type: "boolean" },
+      advanced: { type: "boolean" },
       json: { type: "boolean" },
       fix: { type: "boolean" },
       config: { type: "string" },
@@ -61,6 +69,8 @@ async function main(argv: string[]): Promise<number> {
     nonInteractive: values["non-interactive"] === true,
     json: values.json === true,
     fix: values.fix === true,
+    noOpen: values["no-open"] === true,
+    advanced: values.advanced === true,
     ...(typeof values.project === "string" ? { project: values.project } : {}),
     ...(typeof values.repo === "string" ? { repo: values.repo } : {}),
     ...(typeof values["notify-prefix"] === "string" ? { notifyPrefix: values["notify-prefix"] } : {}),
@@ -72,7 +82,13 @@ async function main(argv: string[]): Promise<number> {
   };
   switch (command) {
     case "init":
-      return init(flags, positionals);
+      return flags.advanced || flags.pipelines !== undefined ? init(flags, positionals) : welcome(flags);
+    case "telegram": {
+      const { telegram } = await import("./commands/telegram");
+      return telegram();
+    }
+    case "welcome":
+      return flags.advanced || flags.pipelines !== undefined ? init(flags, []) : welcome(flags);
     case "start":
       return start(flags);
     case "doctor":

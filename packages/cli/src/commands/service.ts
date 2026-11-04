@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { basename, delimiter, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, cpSync } from "node:fs";
+import { basename, delimiter, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir, userInfo } from "node:os";
 import { ensureHome, homeId, loadConfig, uhHome, readEnvFile, writeEnvFile, engineEnvPath, describeSchedule } from "@ultimatehuman/core";
@@ -158,7 +158,14 @@ async function install(): Promise<number> {
     return 1;
   }
 
-  const cli = fileURLToPath(import.meta.url);
+  const source = fileURLToPath(import.meta.url);
+  const cli = join(home, "runtime", "cli.mjs");
+  if (!existsSync(cli) || realpathSync(source) !== realpathSync(cli)) {
+    mkdirSync(dirname(cli), { recursive: true });
+    cpSync(source, cli);
+    const dashboard = join(dirname(source), "dashboard");
+    if (existsSync(dashboard)) cpSync(dashboard, join(dirname(cli), "dashboard"), { recursive: true });
+  }
   const args = [stableNode(), `--env-file=${envPath()}`, "--disable-warning=ExperimentalWarning", cli, "start"];
   mkdirSync(join(unitPath(), ".."), { recursive: true });
   if (darwin) {

@@ -1,7 +1,9 @@
 {
   "name": "ultimatehuman",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
+  "files": ["dist"],
+  "engines": { "node": ">=22" },
   "type": "module",
   "description": "CLI: init (wizard), start, doctor, config get/set, dashboard, service install.",
   "bin": {
@@ -10,7 +12,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
   },
-  "dependencies": {
+  "devDependencies": {
     "@ultimatehuman/core": "workspace:*",
     "@ultimatehuman/sdk": "workspace:*",
     "@ultimatehuman/plugin-posthog": "workspace:*",

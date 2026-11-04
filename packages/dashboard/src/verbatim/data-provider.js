@@ -34,6 +34,7 @@ import { cockpitHref, stageOf } from '@/app/lib/pipeline-live';
 
 let csrf = '';
 let feed = null;
+let projectScope = null;
 const keyOf = new Map(); // clusterId -> ticket key, stable for the page's life
 const cardOf = new Map(); // ticket key -> cockpit card
 const proposalKey = new Map(); // proposal id -> ticket key
@@ -49,6 +50,8 @@ class EngineError extends Error {
 }
 
 async function engine(path, body) {
+  // Reused settings panels can mount in the shared workspace without the old page bootstrap.
+  if (body !== undefined && !csrf) csrf = (await engine('/api/status')).csrf;
   const res = await realFetch(path, body === undefined
     ? { credentials: 'same-origin', cache: 'no-store' }
     : { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'x-uh-csrf': csrf }, body: JSON.stringify(body) });
@@ -237,9 +240,10 @@ async function refresh() {
 
 // ?pipeline=<id>: the board shows one pipeline's tickets (and its instruction proposals) only.
 const pipelineFilter = () => new URLSearchParams(window.location.search).get('pipeline') || '';
-const shown = (pipelineId) => !pipelineFilter() || pipelineFilter() === pipelineId;
+const shown = (pipelineId, repo) => (!pipelineFilter() || pipelineFilter() === pipelineId)
+  && (!projectScope || projectScope.pipelines.has(pipelineId) || projectScope.repos.has(repo));
 const tickets = () => [
-  ...[...cardOf].filter(([, c]) => shown(c.pipelineId)).map(([key, c]) => toTicket(c, key)),
+  ...[...cardOf].filter(([, c]) => shown(c.pipelineId, c.finding?.repo)).map(([key, c]) => toTicket(c, key)),
   ...[...proposalOf].filter(([, p]) => shown(p.pipelineId)).map(([key, p]) => proposalTicket(p, key)),
 ];
 
@@ -281,6 +285,12 @@ export async function init() {
   try {
     csrf = (await engine('/api/status')).csrf;
     await refresh();
+    const project = new URLSearchParams(window.location.search).get('project');
+    projectScope = null;
+    if (project && project !== 'all') {
+      const selected = (await engine('/api/workspace')).projects.find((p) => p.id === project);
+      projectScope = { pipelines: new Set(selected?.pipelineIds || []), repos: new Set(selected?.repos.map((r) => r.name) || []) };
+    }
     focusFinding();
   } catch (e) {
     if (e instanceof EngineError && e.status === 401) window.location.replace('/');
@@ -292,11 +302,20 @@ export async function init() {
 // ticket keys, so rewrite it to the link the live page itself would give that
 // ticket (its tab + ?focus=KEY) before the page reads the URL.
 function focusFinding() {
-  const id = new URLSearchParams(window.location.search).get('finding');
-  if (!id) return;
-  const key = [...cardOf].find(([, c]) => c.finding?.id === id)?.[0];
+  const url = new URL(window.location.href);
+  const id = url.searchParams.get('finding');
+  const proposal = url.searchParams.get('proposal');
+  if (!id && !proposal) return;
+  const key = id ? [...cardOf].find(([, c]) => c.finding?.id === id)?.[0] : proposalKey.get(proposal);
   const ticket = key && tickets().find((t) => t.key === key);
-  window.history.replaceState(null, '', ticket ? cockpitHref(stageOf(ticket), key) : window.location.pathname);
+  if (ticket) {
+    const target = new URL(cockpitHref(stageOf(ticket), key), window.location.origin);
+    url.searchParams.set('tab', target.searchParams.get('tab'));
+    url.searchParams.set('focus', key);
+  }
+  url.searchParams.delete('finding');
+  url.searchParams.delete('proposal');
+  window.history.replaceState(null, '', url);
 }
 
 const lean = (value) => ({ lean: async () => value() });
@@ -404,7 +423,7 @@ new MutationObserver((records) => records.forEach((r) => r.addedNodes.forEach((n
 
 enhancePipelineBadges({
   pipelineOf: (key) => cardOf.get(key)?.pipelineId || proposalOf.get(key)?.pipelineId,
-  pipelines: () => feed?.pipelines || [],
+  pipelines: () => (feed?.pipelines || []).filter((p) => !projectScope || projectScope.pipelines.has(p.id)),
   counts: () => {
     const n = {};
     for (const c of cardOf.values()) n[c.pipelineId] = (n[c.pipelineId] || 0) + 1;
