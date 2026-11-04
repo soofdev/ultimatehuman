@@ -1,44 +1,63 @@
 # Licensing and company deployments
 
-ultimatehuman is source-available under the **PolyForm Noncommercial License 1.0.0**, with separate paid commercial licenses offered by **Vincent Wargnier**. The full public terms are in [LICENSE](LICENSE); this page explains the licensing model and does not amend those terms.
+**Free for personal use and internal business use by companies with fewer than 2 employees. Business use by companies with 2 or more employees requires a paid commercial license.**
 
-## Free noncommercial use
+ultimatehuman is source-available under the **ultimatehuman Community License 1.0**. It combines the unchanged PolyForm Noncommercial License 1.0.0 with an additional small-business permission. The complete terms are in [LICENSE](LICENSE); this guide explains them and does not replace them. This is a custom license, not MIT, the standard PolyForm Small Business license, or an OSI-approved open-source license.
 
-You may use, modify, and redistribute the software for purposes permitted by PolyForm Noncommercial, subject to its conditions and notice requirements.
+## Who can use it free?
 
-| Use | Public license |
+| Situation | Terms |
 | --- | --- |
-| Personal study, experiments, and hobby projects without anticipated commercial application | Permitted |
-| Other noncommercial purposes | Permitted |
-| Uses by the charitable, educational, public research, public safety/health, environmental, and government organizations specified in the license | Permitted, including the license's funding exception |
-| Commercial business operations or commercial product development | Requires a separate commercial license |
-| Commercial hosting, deployment, or redistribution of the software | Requires a separate commercial license |
+| Personal study, experiments, or hobby projects without anticipated commercial application | Free under the base license |
+| Other purposes permitted by PolyForm Noncommercial, including its specified nonprofit, educational, research, and government uses | Free under the base license |
+| A business with 0 employees using it on its own projects | Free under the small-business permission |
+| A business with 1 employee using it on its own projects | Free under the small-business permission |
+| A business with 2 or more employees using it for its business | Paid commercial license required |
+| A one-person contractor using it on a client's projects | The contractor's business and the client must each qualify or have appropriate commercial rights |
+| Selling, licensing, or hosting ultimatehuman itself for customers | Separate commercial license required, regardless of employee count |
 
-The standard license is broader than strictly personal use: it deliberately permits specified noncommercial organizations and purposes. A public repository does not by itself make commercial use free.
+“Fewer than 2” means **0 or 1**, not 2. The free business permission includes commercial product development and operation of your own business. You do not need to request a license or pay a fee when you qualify; the public license grants that permission directly.
 
-## Paid company licenses and installation
+## How employees are counted
 
-For commercial rights outside the public license, request a written agreement from Vincent Wargnier before using the software commercially. Company installation, configuration, and ongoing operation can be included in that agreement.
+- Count employees across the whole business and the entities controlling it, controlled by it, or under common control with it. A one-person team inside a larger company does not qualify independently.
+- Count each full-time or part-time employee as one person. This is headcount, not full-time equivalents or the number of ultimatehuman users.
+- Founders, owners, and directors count if they are employees. They do not count solely because they own or direct the business.
+- Genuine independent contractors are not employees for this threshold. Actual employment status applies; relabeling an employee does not change the count.
+- When working on a client's repositories, data, or engineering operations, the client's eligibility also applies. A larger company cannot qualify by having a sole contractor run ultimatehuman for it.
+
+For example, a sole founder with no employees can use ultimatehuman free on their business's projects. A company with two employees needs a commercial license for business use, even if only one employee uses ultimatehuman. Two founders with no employment relationship to their business are not two employees under this definition.
+
+Eligibility must hold while using the small-business permission. If the count reaches 2, obtain a commercial license before continuing business use. There is no automatic charge or published price implied by this change; fees and scope are agreed in writing. This release adds license terms, not software that counts staff or disables an installation.
+
+## Paid licenses and installation
+
+For business use outside the free permission, obtain a separate written agreement from **Vincent Wargnier**. Installation, configuration, and ongoing operation can be included in that agreement.
 
 [Request a commercial license or company installation](https://github.com/vincent38wargnier/ultimatehuman/issues/new?title=Commercial%20license%20inquiry). An inquiry does not grant a license. Keep credentials and confidential company information out of public issues.
 
-Commercial agreements specify the licensed customer, permitted use, deployment scope, fees, and any rights for contractors, hosting providers, resellers, or installers. The public license does not grant commercial deployment or distribution rights. It also does not establish an exclusive right over every possible consulting or support service; any intended service-provider restrictions need to be addressed in the applicable commercial agreement.
+Commercial agreements specify the customer, permitted use, deployment scope, fees, and any rights for contractors, hosting providers, resellers, or installers. The small-business permission does not authorize offering ultimatehuman itself as a commercial product or hosted service. It does not establish an exclusive right over every possible consulting or support service; any intended service-provider restrictions need to be addressed in the applicable agreement.
 
 ## Earlier versions
 
-The repository previously identified the project as Apache-2.0, and an Apache 2.0 license file was published through commit [`521cbafe8384eefcf5c8d6e81f45e13efa5151f1`](https://github.com/vincent38wargnier/ultimatehuman/tree/521cbafe8384eefcf5c8d6e81f45e13efa5151f1).
+| Revision or package | Terms originally offered |
+| --- | --- |
+| Through commit [`521cbafe8384eefcf5c8d6e81f45e13efa5151f1`](https://github.com/vincent38wargnier/ultimatehuman/tree/521cbafe8384eefcf5c8d6e81f45e13efa5151f1) | Apache License 2.0 |
+| npm `ultimatehuman@0.1.0` | PolyForm Noncommercial 1.0.0 |
+| npm `ultimatehuman@0.1.1` and revisions carrying the Community License | The complete terms in their included `LICENSE` |
 
-This licensing change does **not** withdraw rights already granted under Apache 2.0. Previously licensed code remains usable under those grants, including for commercial purposes when the Apache conditions are met. The new terms apply to material offered under them and future contributions licensed under them; they do not retroactively restrict the earlier Apache version. No npm version had been published when this policy changed.
+This change does **not** withdraw previously granted rights or rewrite earlier release archives. Code already licensed under Apache 2.0 remains usable under those grants, including for commercial purposes when the Apache conditions are met. Earlier PolyForm grants also remain available for the material offered under them. The additional small-business permission is included in revisions and packages carrying the new complete license.
 
-## Dependencies and other rights
+## Dependencies and contributions
 
-Third-party code, fonts, and other dependencies retain their own licenses. The npm distribution includes their license texts in `THIRD_PARTY_NOTICES.txt`. This project's public license does not replace their terms or claim ownership of them.
+Third-party code, fonts, and dependencies retain their own licenses. The npm distribution includes their texts in `THIRD_PARTY_NOTICES.txt`. This project's license does not replace their terms or claim ownership of them.
 
-Commercial licensing depends on the licensor having the necessary rights in the relevant code. New external contributions require a separate rights review before merging; see [CONTRIBUTING.md](https://github.com/vincent38wargnier/ultimatehuman/blob/main/CONTRIBUTING.md).
+Commercial licensing depends on the licensor having the necessary rights in the relevant code. External copyrightable contributions require the written rights described in [CONTRIBUTING.md](CONTRIBUTING.md) before merging.
 
 ## References
 
+- [Complete ultimatehuman terms](LICENSE)
 - [Official PolyForm Noncommercial terms](https://polyformproject.org/licenses/noncommercial/1.0.0)
-- [PolyForm's guidance on reserving commercial licensing rights](https://polyformproject.org/why-adopt-polyform)
-- [Open Source Definition](https://opensource.org/osd): open-source licenses allow commercial use; this license is source-available instead.
-- [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0.txt): earlier grants are not revoked by this policy.
+- [npm custom-license metadata](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#license)
+- [Open Source Definition](https://opensource.org/osd): restricting business use means this is source-available, not OSI-approved open source.
+- [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0.txt): earlier grants are not revoked by this change.

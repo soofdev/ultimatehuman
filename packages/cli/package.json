@@ -1,13 +1,13 @@
 {
   "name": "ultimatehuman",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "files": ["dist", "LICENSE", "NOTICE", "LICENSING.md", "THIRD_PARTY_NOTICES.txt"],
   "engines": { "node": ">=22.13.0" },
   "os": ["darwin", "linux"],
   "type": "module",
   "description": "AI investigates. You decide. Turn production signals and repository code into evidence-backed engineering reviews, using Claude Code.",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/vincent38wargnier/ultimatehuman.git",

@@ -1,3 +1,96 @@
+# ultimatehuman Community License 1.0
+
+Copyright (c) 2026 Vincent Wargnier
+
+This license consists of the additional small-business permission in Part A
+and the unchanged PolyForm Noncommercial License 1.0.0 in Part B. This is a
+custom combined license, not the standard PolyForm Noncommercial or PolyForm
+Small Business license. The licensor is Vincent Wargnier.
+
+## Part A — Additional small-business permission
+
+### 1. Additional permitted purpose
+
+In addition to every purpose permitted by Part B, the licensor permits you
+to use and modify the software for your company's internal business
+operations and the development and operation of its own products and
+services while your company has fewer than two employees. This permission
+is available without a fee or a separate application.
+
+You may make copies for that permitted use and provide copies to people
+acting on your company's behalf solely to carry out that permitted use,
+subject to the complete terms and notices of this license. Each recipient
+must have their own applicable permission; this is not a sublicensing right.
+
+The copyright and patent grants, conditions, notices, limitations, and other
+terms in Part B apply to this additional permitted purpose. Part A expands
+the permitted purposes; it does not narrow any permission in Part B.
+
+### 2. Employee threshold
+
+Fewer than two means zero or one employee. The employee count includes all
+employees of your company as a whole, including the organizations within
+"your company" as defined in Part B. It is not limited to a department,
+project, installation, or the people who use the software.
+
+Count each full-time or part-time employee as one person, without adjusting
+for hours worked. A founder, owner, or director counts when that person is
+also an employee. Ownership or a directorship alone does not make a person
+an employee for this threshold. Genuine independent contractors are not
+counted as employees. A person's actual employment status under applicable
+law controls, not a title or label chosen to avoid this threshold.
+
+### 3. Clients and commercial services
+
+When you use the software to investigate a client's repositories, data,
+products, or engineering operations, both your company and the client's
+company must qualify under this permission or have appropriate separate
+commercial rights. Running the software through a contractor, affiliate,
+or other intermediary does not exempt the client from this requirement.
+The employee count is applied to each company and its controlled group as
+defined in Part B.
+
+This additional permission does not authorize selling or licensing copies
+of the software, or offering the software itself as a hosted or managed
+service to third parties. Those uses require a separate written commercial
+license unless independently permitted by Part B or a prior applicable
+grant. Using the software internally to develop your company's own product
+does not, by itself, mean you are offering the software as a service.
+
+### 4. Continuing eligibility and commercial licensing
+
+Eligibility must hold while you exercise this additional permission. If
+your company reaches two employees, obtain a separate written commercial
+license from the licensor before continuing use for the additional business
+purpose. This requirement does not affect uses independently permitted by
+Part B. Previous compliant use does not become a violation merely because
+the company later grows.
+
+Commercial rights outside these public permissions require a separate
+written agreement with Vincent Wargnier. Fees, scope, and any service-provider
+rights are set by that agreement. Neither downloading the software nor
+making an inquiry grants additional commercial rights or creates an
+automatic payment obligation.
+
+### 5. Redistribution, other rights, and earlier grants
+
+Preserve this complete license, including Parts A and B, and the required
+notices when distributing the software under it. Every recipient may rely
+on Part A if they independently satisfy its conditions. The licensor grants
+the permissions directly; you may not remove these conditions or represent
+that a recipient has unrestricted commercial rights under this license.
+
+Third-party components retain their own licenses. Nothing here withdraws
+rights previously granted under Apache 2.0, PolyForm Noncommercial 1.0.0,
+or another applicable license. This license grants no exclusive right over
+all installation, consulting, or support services.
+
+## Part B — PolyForm Noncommercial License 1.0.0
+
+The original license text follows unchanged.
+
+---
+
 # PolyForm Noncommercial License 1.0.0
 
 <https://polyformproject.org/licenses/noncommercial/1.0.0>
