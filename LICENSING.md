@@ -34,7 +34,7 @@ Eligibility must hold while using the small-business permission. If the count re
 
 For business use outside the free permission, obtain a separate written agreement from **Vincent Wargnier**. Installation, configuration, and ongoing operation can be included in that agreement.
 
-[Request a commercial license or company installation](https://github.com/vincent38wargnier/ultimatehuman/issues/new?title=Commercial%20license%20inquiry). An inquiry does not grant a license. Keep credentials and confidential company information out of public issues.
+Email **[vincent@vw-coding.com](mailto:vincent@vw-coding.com)** to request a commercial license or company installation. An inquiry does not grant a license.
 
 Commercial agreements specify the customer, permitted use, deployment scope, fees, and any rights for contractors, hosting providers, resellers, or installers. The small-business permission does not authorize offering ultimatehuman itself as a commercial product or hosted service. It does not establish an exclusive right over every possible consulting or support service; any intended service-provider restrictions need to be addressed in the applicable agreement.
 

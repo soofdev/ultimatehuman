@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="ultimatehuman — AI investigates. You decide." width="100%" />
+  <img src="docs/assets/hero.svg" alt="ultimatehuman — Multiply your productivity by 80×. No AI slop. By design. Founder's reported workflow result; see the basis below." width="100%" />
 </p>
 
 <p align="center">
@@ -8,11 +8,17 @@
   <a href="https://github.com/vincent38wargnier/ultimatehuman/actions/workflows/check.yml"><img src="https://github.com/vincent38wargnier/ultimatehuman/actions/workflows/check.yml/badge.svg" alt="Build and package checks" /></a>
 </p>
 
-**Your production data already tells you where the product is breaking. ultimatehuman connects it to your code and brings you the investigation, the evidence, and a decision.**
+## Multiply your productivity by 80×.
 
-Run it on your machine. Set it up through chat. Watch the pipeline work. Review what deserves action.
+**Four months of AI-assisted work → one day of human decisions.**
 
-**Free for personal use and internal business use by companies with fewer than 2 employees. Businesses with 2 or more employees need a paid license for business use.** [Eligibility and commercial licensing](LICENSING.md)
+That is the result behind ultimatehuman. Vincent reports **about 100 tickets reviewed in 5 hours** in the founding workflow. The **80×** comparison uses 80 tickets at an estimated previous pace of one ticket per workday, compared with one day of human review. It compares human effort, not total engineering time, and is not a benchmark of this npm release.
+
+## No AI slop. By design.
+
+**AI cannot approve its own work.** It investigates the problem, checks the evidence, and brings you a decision. You inspect the case and accept, dismiss, or hold it.
+
+The public release delivers **investigation and human review**. The full workflow extends this to fixes, browser proof, and independent deployed verification; those stages are still being built. Evidence checks reduce unsupported findings; they are not a zero-defect guarantee.
 
 ## Start here
 
@@ -20,7 +26,11 @@ Run it on your machine. Set it up through chat. Watch the pipeline work. Review 
 npx ultimatehuman@latest
 ```
 
+Run it locally. Set it up through chat. Watch **Pipeline live**. Make the call in **Review**.
+
 Requires **macOS or Linux**, **Node.js 22.13+**, **Git**, and **Claude Code installed and signed in**. [Install Node.js](https://nodejs.org/en/download) · [Set up Claude Code](https://code.claude.com/docs/en/quickstart)
+
+Free for personal use and internal business use with fewer than 2 employees. Business use with 2 or more employees requires a paid license. [License details](LICENSING.md) · [Contact Vincent](mailto:vincent@vw-coding.com)
 
 The CLI verifies your existing Claude account, starts the local engine, and opens your browser. **Continue in Chat.** Chat and investigations use your configured Claude Code account and count toward its usage limits.
 
@@ -35,13 +45,17 @@ Start with something like:
 
 Run the same command again to reopen your workspace. Your repositories, settings, and conversation are preserved.
 
-## Less chasing. More deciding.
+## How the evidence reaches you
 
-A log is a symptom. A replay is a clue. A repository explains how the failure could happen. Putting those pieces together is the work.
+Your production data tells you where the product is breaking. ultimatehuman connects those signals to your code and prepares a case you can inspect.
 
-ultimatehuman runs that investigation for you: it groups signals, reads the relevant code, challenges the explanation, and checks the evidence before a finding reaches your review queue. If the evidence does not hold up, the pipeline can finish without a finding.
+| Step | What happens |
+| --- | --- |
+| **01 · AI investigates** | Groups related signals, reads the relevant code, and explains the suspected cause. |
+| **02 · The pipeline requires evidence** | Challenges the explanation and checks the configured evidence requirements before filing a finding. |
+| **03 · You decide** | Inspect the problem, impact, and evidence. Accept, dismiss, or hold the finding. |
 
-**The AI does not approve its own work. You make the decision.**
+If the evidence does not hold up, a run can finish without a finding. Accepting one records your decision; it does not automatically merge or deploy code.
 
 <p align="center">
   <img src="docs/assets/pipeline.svg" alt="Production signals and repository code flow through investigation and evidence checks to a human review." width="100%" />
@@ -88,7 +102,7 @@ The original Review viewer opens each screenshot at full size, with navigation b
 
 [View the checkout screenshot](docs/assets/screenshots/checkout-failure.png) · [View the request trace](docs/assets/screenshots/checkout-request.png)
 
-**Example scope:** these attachments come from a local demo. Version `0.1.0` does not yet connect screenshot attachments to review tickets or capture them automatically. The shipped release records investigation decisions; automated fixes and merges are future stages. [Screenshot details](docs/assets/screenshots/README.md)
+**Example scope:** these attachments come from a local demo. The current release does not yet connect screenshot attachments to review tickets or capture them automatically. The shipped release records investigation decisions; automated fixes and merges are future stages. [Screenshot details](docs/assets/screenshots/README.md)
 
 ## Start with the tools you already use
 
@@ -157,6 +171,10 @@ This is an early source-available release. Useful bug reports include the instal
 
 [Report a problem](https://github.com/vincent38wargnier/ultimatehuman/issues) · [Contribute](CONTRIBUTING.md) · [Run from source](docs/development.md) · [Agent installation guide](docs/agent-install.md)
 
+## Talk to the founder
+
+Questions, company installation, or commercial licensing: **[vincent@vw-coding.com](mailto:vincent@vw-coding.com)** — Vincent Wargnier, VW Coding.
+
 ## License and commercial use
 
 Source-available under the [ultimatehuman Community License 1.0](LICENSE). This combines PolyForm Noncommercial 1.0.0 with an additional permission for qualifying small businesses. It is a custom license, not MIT or an OSI-approved open-source license.
@@ -170,6 +188,6 @@ Source-available under the [ultimatehuman Community License 1.0](LICENSE). This 
 
 Count employees across the business and its controlled group, not just ultimatehuman users. Part-time employees count as one person; founders count if they are employees. Work on a client's projects uses the client's headcount too. If the business grows to 2 employees, obtain a commercial license before continuing business use. The underlying license's specified nonprofit, educational, research, and government permissions remain available.
 
-[Request a commercial license or company installation from Vincent Wargnier](https://github.com/vincent38wargnier/ultimatehuman/issues/new?title=Commercial%20license%20inquiry).
+[Contact Vincent Wargnier for a commercial license or company installation](mailto:vincent@vw-coding.com).
 
 Previously granted rights remain valid, including the earlier Apache-licensed revisions. [Eligibility examples, previous versions, and third-party licenses](LICENSING.md)
