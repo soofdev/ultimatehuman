@@ -120,6 +120,7 @@ Compare it daily, for 14 days, against the issues that team actually confirmed.
 
 ## v2 (not scheduled)
 
+- **Codex CLI (planned):** reuse an installed Codex login as another runner for chat and investigations. Preserve approval controls and read-only pipeline access; verify login detection, model selection, usage-limit handling, and a complete real run before advertising support.
 - **Fixes:** auto-fix PRs from a read-only clone.
 - **Environment work:** the environment smoke probe, plus a hostile-exam QA executor driven by `environments[]` + playbooks, with screenshot evidence on the PR.
 - **Embedding:** the React embed kit.

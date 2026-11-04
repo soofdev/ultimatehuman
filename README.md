@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="ultimatehuman — Multiply your productivity by 80×. No AI slop. By design. Founder's reported workflow result; see the basis below." width="100%" />
+  <img src="docs/assets/hero.svg" alt="ultimatehuman — 80× productivity. No AI slop. Proof before your attention. Runs on your Claude Code CLI subscription with $0 extra AI spend within its included usage. See the result's basis and cost details below." width="100%" />
 </p>
 
 <p align="center">
@@ -19,6 +19,19 @@ That is the result behind ultimatehuman. Vincent reports **about 100 tickets rev
 **AI cannot approve its own work.** It investigates the problem, checks the evidence, and brings you a decision. You inspect the case and accept, dismiss, or hold it.
 
 The public release delivers **investigation and human review**. The full workflow extends this to fixes, browser proof, and independent deployed verification; those stages are still being built. Evidence checks reduce unsupported findings; they are not a zero-defect guarantee.
+
+## Your existing CLI. Your existing subscription.
+
+**Runs on your Claude Code CLI. $0 extra AI spend within your subscription's included usage.** No second AI subscription or separate model API key is required.
+
+The engine reuses your local Claude Code login for chat and investigations. Work counts toward your existing plan's limits. Provider extra usage or a separately configured API key can incur charges. [Claude's billing explanation](https://support.claude.com/en/articles/12304248-manage-api-key-environment-variables-in-claude-code)
+
+Commercial licenses for ultimatehuman and any paid tracking or hosting services are separate. [License details](LICENSING.md)
+
+| CLI | Status |
+| --- | --- |
+| **Claude Code** | Available — reuses your local login |
+| **Codex CLI** | Planned — not implemented in this release |
 
 ## Start here
 
@@ -156,6 +169,10 @@ Prefer a persistent command? Run `npm install -g ultimatehuman`, then `ultimateh
 ### Questions
 
 **Do I need a separate API key for Claude?** No. The normal installation uses your existing Claude Code login. Tracker credentials are separate and are requested only when connecting a source.
+
+**Does it add an AI bill?** With subscription login, work within your plan's included usage has no additional AI charge. Your existing limits still apply; provider extra usage and API-key billing are separate. ultimatehuman's commercial license and third-party services may also carry costs.
+
+**Can I use Codex CLI?** Not yet. The current installer, chat, and pipeline runner require Claude Code. Codex support is [planned](ROADMAP.md#v2-not-scheduled).
 
 **Can one project include several repositories?** Yes. Tell chat which repositories belong together, such as your frontend and API.
 
