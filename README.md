@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/ultimatehuman"><img src="https://img.shields.io/npm/v/ultimatehuman?color=d3ff5f&labelColor=152018" alt="npm version" /></a>
-  <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-PolyForm_Noncommercial-d3ff5f?labelColor=152018" alt="PolyForm Noncommercial license" /></a>
+  <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-Community-d3ff5f?labelColor=152018" alt="ultimatehuman Community License" /></a>
   <a href="https://github.com/vincent38wargnier/ultimatehuman/actions/workflows/check.yml"><img src="https://github.com/vincent38wargnier/ultimatehuman/actions/workflows/check.yml/badge.svg" alt="Build and package checks" /></a>
 </p>
 
@@ -12,7 +12,7 @@
 
 Run it on your machine. Set it up through chat. Watch the pipeline work. Review what deserves action.
 
-**Free for personal and other noncommercial use. Commercial use requires a separate paid license.** [Licensing and company deployments](LICENSING.md)
+**Free for personal use and internal business use by companies with fewer than 2 employees. Businesses with 2 or more employees need a paid license for business use.** [Eligibility and commercial licensing](LICENSING.md)
 
 ## Start here
 
@@ -159,8 +159,17 @@ This is an early source-available release. Useful bug reports include the instal
 
 ## License and commercial use
 
-Source-available under [PolyForm Noncommercial 1.0.0](LICENSE). Personal hobby projects and other uses permitted by that license are free, including its nonprofit, educational, research, and government uses. This is not an OSI-approved open-source license.
+Source-available under the [ultimatehuman Community License 1.0](LICENSE). This combines PolyForm Noncommercial 1.0.0 with an additional permission for qualifying small businesses. It is a custom license, not MIT or an OSI-approved open-source license.
 
-To use ultimatehuman for commercial business operations, commercial deployments, or commercial redistribution, obtain a separate written commercial license from **Vincent Wargnier**. [Request a commercial license or company installation](https://github.com/vincent38wargnier/ultimatehuman/issues/new?title=Commercial%20license%20inquiry)
+| Use | Terms |
+| --- | --- |
+| Personal and other permitted noncommercial use | Free |
+| Internal business use with 0 or 1 employee | Free under the small-business permission |
+| Business use with 2 or more employees | Separate paid commercial license required |
+| Selling or hosting ultimatehuman itself for customers | Separate commercial license required |
 
-Earlier Apache-licensed revisions retain their existing permissions; this change does not revoke them. [Scope, previous versions, and third-party licenses](LICENSING.md)
+Count employees across the business and its controlled group, not just ultimatehuman users. Part-time employees count as one person; founders count if they are employees. Work on a client's projects uses the client's headcount too. If the business grows to 2 employees, obtain a commercial license before continuing business use. The underlying license's specified nonprofit, educational, research, and government permissions remain available.
+
+[Request a commercial license or company installation from Vincent Wargnier](https://github.com/vincent38wargnier/ultimatehuman/issues/new?title=Commercial%20license%20inquiry).
+
+Previously granted rights remain valid, including the earlier Apache-licensed revisions. [Eligibility examples, previous versions, and third-party licenses](LICENSING.md)

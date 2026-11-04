@@ -1,8 +1,8 @@
 # Publish to npm
 
-The public package is `ultimatehuman`. The repository root and internal workspace packages stay private. The publishable artifact is prepared in `dist/npm`; it contains the bundled CLI and dashboard, README, PolyForm Noncommercial license, required notices, licensing guide, and third-party notices.
+The public package is `ultimatehuman`. The repository root and internal workspace packages stay private. The publishable artifact is prepared in `dist/npm`; it contains the bundled CLI and dashboard, README, the complete ultimatehuman Community License, required notices, licensing guide, and third-party notices.
 
-The public npm package does not include commercial permission. Company licenses are separate written agreements; see [LICENSING.md](../LICENSING.md). Check the package license and required notices before publishing. Do not reuse an archive prepared under an earlier license.
+The public npm package includes free noncommercial use and the small-business permission for internal business use with fewer than 2 employees. Other commercial uses require a separate written agreement; see [LICENSING.md](../LICENSING.md). The custom license uses npm's `SEE LICENSE IN LICENSE` metadata, not a standard PolyForm or MIT identifier. Check the complete license and required notices before publishing. Do not reuse an archive prepared under an earlier license.
 
 ## Prepare
 
