@@ -4,13 +4,15 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/ultimatehuman"><img src="https://img.shields.io/npm/v/ultimatehuman?color=d3ff5f&labelColor=152018" alt="npm version" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-d3ff5f?labelColor=152018" alt="Apache 2.0 license" /></a>
+  <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-PolyForm_Noncommercial-d3ff5f?labelColor=152018" alt="PolyForm Noncommercial license" /></a>
   <a href="https://github.com/vincent38wargnier/ultimatehuman/actions/workflows/check.yml"><img src="https://github.com/vincent38wargnier/ultimatehuman/actions/workflows/check.yml/badge.svg" alt="Build and package checks" /></a>
 </p>
 
 **Your production data already tells you where the product is breaking. ultimatehuman connects it to your code and brings you the investigation, the evidence, and a decision.**
 
 Run it on your machine. Set it up through chat. Watch the pipeline work. Review what deserves action.
+
+**Free for personal and other noncommercial use. Commercial use requires a separate paid license.** [Licensing and company deployments](LICENSING.md)
 
 ## Start here
 
@@ -119,8 +121,14 @@ Prefer a persistent command? Run `npm install -g ultimatehuman`, then `ultimateh
 
 ## Build with us
 
-This is an early open-source release. Useful bug reports include the installed version, the steps you took, and what you expected. Remove credentials and private project data before posting.
+This is an early source-available release. Useful bug reports include the installed version, the steps you took, and what you expected. Remove credentials and private project data before posting.
 
 [Report a problem](https://github.com/vincent38wargnier/ultimatehuman/issues) · [Contribute](CONTRIBUTING.md) · [Run from source](docs/development.md) · [Agent installation guide](docs/agent-install.md)
 
-Licensed under [Apache 2.0](LICENSE).
+## License and commercial use
+
+Source-available under [PolyForm Noncommercial 1.0.0](LICENSE). Personal hobby projects and other uses permitted by that license are free, including its nonprofit, educational, research, and government uses. This is not an OSI-approved open-source license.
+
+To use ultimatehuman for commercial business operations, commercial deployments, or commercial redistribution, obtain a separate written commercial license from **Vincent Wargnier**. [Request a commercial license or company installation](https://github.com/vincent38wargnier/ultimatehuman/issues/new?title=Commercial%20license%20inquiry)
+
+Earlier Apache-licensed revisions retain their existing permissions; this change does not revoke them. [Scope, previous versions, and third-party licenses](LICENSING.md)

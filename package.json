@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "AI investigates. You decide. Evidence-backed engineering reviews powered by Claude Code.",
-  "license": "Apache-2.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "packageManager": "pnpm@11.10.0",
   "engines": {

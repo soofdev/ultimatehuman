@@ -20,4 +20,10 @@ Before opening a pull request, build the project, run type checks, and run the r
 
 Explain the user-visible behavior, the checks you ran, and any remaining limitations. Include screenshots for visual changes using sample data. Never include private project data or credentials.
 
-By submitting a contribution, you agree that it is provided under this project's [Apache 2.0 license](LICENSE).
+## Contribution rights
+
+The public project uses [PolyForm Noncommercial 1.0.0](LICENSE), and the owner also offers separate commercial licenses. See [LICENSING.md](LICENSING.md).
+
+Before merging code or other copyrightable material from an external contributor, the maintainer must obtain a separate written contributor agreement granting the rights needed to distribute and sublicense that contribution under both the public license and commercial terms. A pull request alone is not that agreement and does not transfer copyright. Do not merge external contributions until the necessary rights are documented.
+
+Bug reports and feature suggestions are welcome without a contributor agreement. Do not include third-party code unless its origin and license are documented.
