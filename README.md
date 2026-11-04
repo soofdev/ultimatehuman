@@ -58,6 +58,28 @@ ultimatehuman runs that investigation for you: it groups signals, reads the rele
 
 The browser, terminal, and optional Telegram connection share one conversation. Chat offers the models available in your installed Claude Code, with **Opus 5.5** as its default. Changing the chat model leaves pipeline models unchanged.
 
+## See the product
+
+Screenshots of the shipped `0.1.0` interface, using fictional Acme repositories and sample messages, findings, and run states.
+
+### Set up through chat
+
+Tell it which repositories belong to your project and when to investigate. Chat explains the scope, identifies existing tracking tools, and guides you to the first review.
+
+![Chat showing a project's repositories, security review schedule, and next steps](docs/assets/screenshots/chat.png)
+
+### Follow the pipeline live
+
+See what is running, what is being checked, and what needs your decision. Expand a run to inspect its individual steps.
+
+![Pipeline live showing verification in progress, two findings awaiting a decision, and the run's agent steps](docs/assets/screenshots/pipeline-live.png)
+
+### Make the decision
+
+Inspect the finding's explanation and code references, then accept it, dismiss it, or set it aside. The shipped release records investigation decisions; automated fixes and merges are future stages.
+
+![Review showing an example finding, its root cause and code reference, and the Accept, Dismiss, and Not now choices](docs/assets/screenshots/review.png)
+
 ## Start with the tools you already use
 
 | Input | What it unlocks today |
