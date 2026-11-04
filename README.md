@@ -60,7 +60,7 @@ The browser, terminal, and optional Telegram connection share one conversation. 
 
 ## See the product
 
-Screenshots of the shipped `0.1.0` interface, using fictional Acme repositories and sample messages, findings, and run states.
+Screenshots use fictional Acme repositories and sample data. Chat and Pipeline live show the shipped `0.1.0` interface; the Review example below also illustrates its screenshot viewer with demo attachments.
 
 ### Set up through chat
 
@@ -76,9 +76,19 @@ See what is running, what is being checked, and what needs your decision. Expand
 
 ### Make the decision
 
-Inspect the finding's explanation and code references, then accept it, dismiss it, or set it aside. The shipped release records investigation decisions; automated fixes and merges are future stages.
+**A valid ZIP code. A failed checkout. An explanation you can inspect.**
 
-![Review showing an example finding, its root cause and code reference, and the Accept, Dismiss, and Not now choices](docs/assets/screenshots/review.png)
+In this example, a shopper enters `02108`. The checkout converts it to `2108`, and the API rejects the order. The ticket brings together the cause, code reference, and two screenshots: the checkout failure and the request behind it.
+
+![Review ticket for a checkout bug, with two screenshot evidence thumbnails, the root cause, and Accept, Dismiss, and Not now choices](docs/assets/screenshots/review.png)
+
+The original Review viewer opens each screenshot at full size, with navigation between the evidence images.
+
+![Full-screen evidence viewer showing a valid ZIP code rejected by the fictional Acme checkout](docs/assets/screenshots/review-evidence.png)
+
+[View the checkout screenshot](docs/assets/screenshots/checkout-failure.png) · [View the request trace](docs/assets/screenshots/checkout-request.png)
+
+**Example scope:** these attachments come from a local demo. Version `0.1.0` does not yet connect screenshot attachments to review tickets or capture them automatically. The shipped release records investigation decisions; automated fixes and merges are future stages. [Screenshot details](docs/assets/screenshots/README.md)
 
 ## Start with the tools you already use
 
