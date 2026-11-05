@@ -1,21 +1,27 @@
 import { Fragment, type ReactNode } from "react";
 
-/** Tiny renderer for the issue body the engine renders from structured fields (headings, lists, quotes, links, bold, code). */
-function inline(s: string, key = 0): ReactNode[] {
+/** Tiny renderer for the issue body the engine renders from structured fields (headings, lists, quotes, links, bold, italics, code). */
+const INLINE = /\[([^\]]+)\]\(([^)\s]+)\)|\*\*(.+?)\*\*|`([^`]+)`|(?<![\w*])\*(?![\s*])([^*\n]+?)(?<!\s)\*(?![\w*])|(https?:\/\/[^\s<>()[\]]*[^\s<>()[\].,;:!?'"])/g;
+const external = (href: string) => /^https?:/i.test(href) ? { target: "_blank", rel: "noreferrer" } : {};
+function inline(s: string, key: number | string = 0, inLink = false): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|`([^`]+)`/g;
+  const re = new RegExp(INLINE.source, "g");
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(s))) {
+    const k = `${key}-${m.index}`;
     if (m.index > last) out.push(s.slice(last, m.index));
     if (m[1]) {
       const href = m[2] || "";
-      const safe = /^https?:\/\//i.test(href) || /^\/(?!\/)/.test(href) || href.startsWith("#");
-      const label = /^`[^`]+`$/.test(m[1]) ? <code>{m[1].slice(1, -1)}</code> : m[1];
-      out.push(safe ? <a key={`${key}-${m.index}`} href={href} {...(/^https?:/.test(href) ? { target: "_blank", rel: "noreferrer" } : {})}>{label}</a> : <Fragment key={`${key}-${m.index}`}>{label}</Fragment>);
+      const safe = !inLink && (/^https?:\/\//i.test(href) || /^\/(?!\/)/.test(href) || href.startsWith("#"));
+      // Bold, italics or code inside the label render too; a link never nests in a link.
+      const label = inline(m[1], k, true);
+      out.push(safe ? <a key={k} href={href} {...external(href)}>{label}</a> : <Fragment key={k}>{label}</Fragment>);
     }
-    else if (m[3]) out.push(<b key={`${key}-${m.index}`}>{m[3]}</b>);
-    else if (m[4]) out.push(<code key={`${key}-${m.index}`}>{m[4]}</code>);
+    else if (m[3]) out.push(<b key={k}>{inline(m[3], k, inLink)}</b>);
+    else if (m[4]) out.push(<code key={k}>{m[4]}</code>);
+    else if (m[5]) out.push(<em key={k}>{inline(m[5], k, inLink)}</em>);
+    else if (m[6]) out.push(inLink ? m[6] : <a key={k} href={m[6]} {...external(m[6])}>{m[6]}</a>);
     last = m.index + m[0].length;
   }
   if (last < s.length) out.push(s.slice(last));

@@ -12,7 +12,8 @@ import {
 import { instantiate, templateById } from "../pipelines/registry";
 import { publicRun } from "../pass/executor";
 import { readOnlyHttp } from "../plugins/http";
-import { setEngineEnv } from "../envfile";
+import { readEnvFile, setEngineEnv, writeEnvFile } from "../envfile";
+import { credentialFacts, credentialVariants, sortCredentials } from "../chat/connections";
 import { checkProvider, type ProviderReadiness } from "./provider";
 import { providerFor, agentModel } from "../runner/provider";
 
@@ -36,6 +37,31 @@ const stamp = () => new Date().toISOString();
 const projectOf = (repo: { name: string; project?: string | undefined }) =>
   repo.project ?? repo.name;
 const probeKey = (id: string) => `workspace.probe.${id}`;
+/** The last submitted keys that failed their access check (references only, never values). */
+export const pendingKey = (id: string) => `workspace.pending.${id}`;
+
+/** What the last failed submission (or a key pasted in chat) left saved: secret fields from the engine env, site/host from its references. */
+export function pendingValues(store: Store, plugins: readonly Plugin[], id: string): Record<string, string> {
+  const attempt = store.getKv<{ references?: Record<string, string> }>(pendingKey(id));
+  const env = readEnvFile();
+  const out: Record<string, string> = {};
+  for (const field of plugins.find((p) => p.manifest.id === id)?.manifest.credentials ?? []) {
+    const value = field.secret ? env.get(`UH_PENDING_${id.toUpperCase()}_${field.key.toUpperCase()}`) : attempt?.references?.[field.key];
+    if (value && !/^\$\{/.test(value)) out[field.key] = value;
+  }
+  return out;
+}
+
+/** The Datadog site or PostHog region the connected repositories' code names, if any. */
+export function discoveredHint(store: Store, config: Config, id: string, field: string): string {
+  const key = id === "datadog" && field === "site" ? "datadogSite" : id === "posthog" && field === "host" ? "posthogHost" : "";
+  if (!key) return "";
+  for (const repo of config.repos) {
+    const hint = store.getKv<RepositoryDiscovery>(`discovery.${repo.name}`)?.hints?.[key];
+    if (hint) return hint;
+  }
+  return "";
+}
 
 /** Local project management. Reading discovery never starts an agent or an external action. */
 export function workspaceRoutes(d: Deps): Record<string, Route> {
@@ -292,54 +318,113 @@ export function workspaceRoutes(d: Deps): Record<string, Route> {
           status: 400,
           json: { error: "This connector is not available in this version." },
         };
-      const current = d.config().plugins[p.manifest.id];
+      const id = p.manifest.id;
+      // The in-chat form and the chat agent always keep what was submitted; the chat explains a failed check.
+      const accept = body.acceptFailure === true;
+      const current = d.config().plugins[id];
       const previous = await d
-        .credentials(p.manifest.id)
+        .credentials(id)
         .catch(() => ({}) as Record<string, string>);
-      const credentials: Record<string, string> = {};
-      const refs: Record<string, string> = {};
-      const secrets: Record<string, string> = {};
+      // Chat paths reuse what an earlier failed submission already saved, so nobody re-enters a key the engine has.
+      const pending = accept ? sortCredentials(id, pendingValues(d.store, d.plugins, id)).values : {};
+      const given: Record<string, string> = {};
       for (const field of p.manifest.credentials) {
-        const supplied = String(body.credentials?.[field.key] ?? "").trim();
-        if (/[\r\n\0]/.test(supplied))
+        const value = String(body.credentials?.[field.key] ?? "").trim();
+        if (/[\r\n\0]/.test(value))
           throw new Error(`Invalid ${field.label}.`);
-        const value = supplied || previous[field.key] || field.default || "";
-        if (!value && !field.optional)
-          throw new Error(`${field.label} is required.`);
-        if (!value) continue;
-        if (field.pattern && !new RegExp(field.pattern).test(value))
-          throw new Error(`Check the format of ${field.label}.`);
-        credentials[field.key] = value;
-        if (field.secret) {
-          const key = `UH_WORKSPACE_${p.manifest.id.toUpperCase()}_${field.key.toUpperCase()}`;
-          secrets[key] = value;
-          refs[field.key] = `\${${key}}`;
-        } else refs[field.key] = value;
+        if (value) given[field.key] = value;
       }
+      // Keys in the wrong field are moved by their format before the check, never sent back as an error.
+      // A field left empty, or holding only a key ID, keeps the key the engine already has.
+      const sorted = sortCredentials(id, given);
+      const values: Record<string, string> = {};
+      const problems: string[] = [...sorted.notes];
+      for (const field of p.manifest.credentials) {
+        const value = sorted.values[field.key] || previous[field.key] || pending[field.key] || (accept ? discoveredHint(d.store, d.config(), id, field.key) : "") || field.default || "";
+        if (!value && !field.optional) {
+          if (!accept) throw new Error(`${field.label} is required.`);
+          problems.push(`${field.label} is missing.`);
+          continue;
+        }
+        if (!value) continue;
+        if (field.pattern && !new RegExp(field.pattern).test(value)) {
+          if (!accept) throw new Error(`Check the format of ${field.label}.`);
+          problems.push(`${field.label} does not have the expected format.`);
+        }
+        values[field.key] = value;
+      }
+      const facts = [...credentialFacts(id, values), ...problems];
       const options = { ...(current?.options ?? {}), ...(body.options ?? {}) };
       const signal = AbortSignal.timeout(30_000);
-      const result = await p.probe({
-        credentials,
-        options,
-        http: readOnlyHttp(
-          p.manifest.id,
-          p.readOnlyPostAllowlist ?? [],
-          () => {},
+      const probe = (credentials: Record<string, string>): Promise<ProbeResult> =>
+        Promise.resolve(p.probe({
+          credentials,
+          options,
+          http: readOnlyHttp(id, p.readOnlyPostAllowlist ?? [], () => {}, signal),
           signal,
-        ),
-        signal,
-        log: () => {},
-      } as any);
-      if (!result.ok)
-        return {
-          status: 400,
-          json: { error: `${result.summary}. ${result.fix ?? ""}`.trim() },
-        };
+          log: () => {},
+        } as any)).catch((e) => ({ ok: false, summary: (e as Error).message }) as ProbeResult);
+      const missing = p.manifest.credentials.some((f) => !f.optional && !values[f.key]);
+      let used = values;
+      // Keys moved by their format count as corrections, so the chat can say what was fixed.
+      let corrected = sorted.notes.filter((n) => !/set aside/.test(n)).join(" ");
+      let result: ProbeResult = missing
+        ? { ok: false, summary: "Required values are missing" }
+        : await probe(values);
+      if (!result.ok && accept && !missing) {
+        // A wrong site/region or swapped fields is fixed here instead of being sent back as an error.
+        const variants = credentialVariants(id, values);
+        const tried = await Promise.all(variants.map(async (v) => ({ v, r: await probe(v.values) })));
+        const hit = tried.find((t) => t.r.ok);
+        if (hit) {
+          used = hit.v.values;
+          corrected = [corrected, hit.v.note].filter(Boolean).join(" ");
+          result = hit.r;
+        } else if (variants.length)
+          facts.push(`Also tried ${variants.length} other combination${variants.length === 1 ? "" : "s"} (other sites or regions, swapped fields). None was accepted.`);
+      }
+      const prefix = `UH_WORKSPACE_${id.toUpperCase()}_`;
+      const pendingPrefix = `UH_PENDING_${id.toUpperCase()}_`;
+      const persist = (envPrefix: string) => {
+        const refs: Record<string, string> = {};
+        const secrets: Record<string, string> = {};
+        for (const field of p.manifest.credentials) {
+          const value = used[field.key];
+          if (!value) continue;
+          if (field.secret) {
+            const key = `${envPrefix}${field.key.toUpperCase()}`;
+            secrets[key] = value;
+            refs[field.key] = `\${${key}}`;
+          } else refs[field.key] = value;
+        }
+        setEngineEnv(secrets);
+        for (const [key, value] of Object.entries(secrets)) process.env[key] = value;
+        return refs;
+      };
+      if (!result.ok) {
+        if (!accept)
+          return {
+            status: 400,
+            json: { error: `${result.summary}. ${result.fix ?? ""}`.trim() },
+          };
+        // Saved outside the configuration: a working connection is never replaced by keys that failed.
+        // Only this attempt's sorted values stay saved, so a key moved to its right field is never reused from the wrong one.
+        const env = readEnvFile();
+        if ([...env.keys()].some((k) => k.startsWith(pendingPrefix))) {
+          for (const k of [...env.keys()]) if (k.startsWith(pendingPrefix)) { env.delete(k); delete process.env[k]; }
+          writeEnvFile(env);
+        }
+        const references = persist(pendingPrefix);
+        const stillMissing = p.manifest.credentials.filter((f) => !f.optional && !used[f.key]).map((f) => f.label);
+        const attempt = { at: stamp(), references, summary: result.summary, fix: result.fix ?? "", facts, ...(stillMissing.length ? { missing: stillMissing } : {}) };
+        d.store.setKv(pendingKey(id), attempt);
+        return { json: { ok: false, saved: true, verified: false, source: id, ...attempt } };
+      }
       const projects = result.detected?.projects as
         | { id: number; name: string }[]
         | undefined;
       if (
-        p.manifest.id === "posthog" &&
+        id === "posthog" &&
         projects &&
         projects.length > 1 &&
         !options.projectId
@@ -350,10 +435,11 @@ export function workspaceRoutes(d: Deps): Record<string, Route> {
             error:
               "Choose the PostHog project to connect by entering its project ID.",
             projects,
+            ...(used.host !== values.host ? { host: used.host, corrected } : {}),
           },
         };
       if (
-        p.manifest.id === "posthog" &&
+        id === "posthog" &&
         projects &&
         options.projectId &&
         !projects.some((x) => String(x.id) === String(options.projectId))
@@ -362,17 +448,21 @@ export function workspaceRoutes(d: Deps): Record<string, Route> {
       if (result.detected?.projectId)
         options.projectId = result.detected.projectId;
       // Credentials are persisted only after the live read-only probe succeeds.
-      setEngineEnv(secrets);
-      for (const [key, value] of Object.entries(secrets))
-        process.env[key] = value;
+      const refs = persist(prefix);
+      const env = readEnvFile();
+      if ([...env.keys()].some((k) => k.startsWith(pendingPrefix))) {
+        for (const k of [...env.keys()]) if (k.startsWith(pendingPrefix)) { env.delete(k); delete process.env[k]; }
+        writeEnvFile(env);
+      }
+      d.store.setKv(pendingKey(id), null);
       await d.patch((raw) => {
         raw.plugins = {
           ...(raw.plugins ?? {}),
-          [p.manifest.id]: { enabled: true, credentials: refs, options },
+          [id]: { enabled: true, credentials: refs, options },
         };
       });
-      d.store.setKv(probeKey(p.manifest.id), { ...result, at: stamp() });
-      return { json: { ok: true, probe: result } };
+      d.store.setKv(probeKey(id), { ...result, at: stamp() });
+      return { json: { ok: true, probe: result, ...(corrected ? { corrected } : {}) } };
     },
     "POST /api/workspace/preferences": async (_req, body) => {
       const reserve = Number(body.reserve);

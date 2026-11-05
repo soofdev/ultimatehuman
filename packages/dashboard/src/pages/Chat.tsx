@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatModelPicker } from "../ChatModelPicker";
-import { ImagePlus, Loader2, ArrowUp, ArrowUpRight, Cable, Check, Terminal, X } from "lucide-react";
+import { ImagePlus, Loader2, ArrowUp, ArrowUpRight, Cable, Check, CheckCircle2, AlertTriangle, Terminal, X } from "lucide-react";
+import { RUN_STEPS, ago, duration, isActive, runNow, runOutcome, runStepIndex } from "../run-story";
 import { get, post } from "../api";
 import { time } from "../fmt";
 import { Markdown } from "../Markdown";
@@ -12,6 +13,17 @@ const SENT_NOTE = /^\[user sent an? ([a-z ]+), saved at (\/.+)\]$/;
 const SEND_TAG = /\[\[send:([^\]]+)\]\]/g;
 const IMAGE = /\.(png|jpe?g|webp|gif|svg)$/i;
 const fileUrl = (p: string) => `/api/chat/file?path=${encodeURIComponent(p)}`;
+/** Same text the engine stores as the opening message; shown at once so the screen never waits for it. */
+const FIRST_QUESTION = "Which project do you want to start with?";
+const KICKOFF = /^Help me (set up ultimatehuman|manage this workspace)\.$/;
+const cliName = (provider?: string) => provider === "codex" ? "Codex" : provider === "claude" ? "Claude Code" : "";
+/** "claude-opus-5-5" → "Opus 5.5"; other ids use the CLI's own label when known. */
+function modelName(id: string | undefined, labels: Record<string, string>): string {
+  if (!id) return "";
+  const claude = /^claude-(opus|sonnet|haiku|fable)-(\d+)-(\d+)/i.exec(id);
+  if (claude) return `${claude[1]![0]!.toUpperCase()}${claude[1]!.slice(1)} ${claude[2]}.${claude[3]}`;
+  return labels[id] || id.replace(/^gpt-/i, "GPT-");
+}
 
 /** Splits a stored message into the text to show and the files it carries. */
 function parts(m: { role: string; text: string }): { text: string; files: string[] } {
@@ -49,6 +61,27 @@ function Attachment({ path, open }: { path: string; open: (p: string) => void })
   );
 }
 
+/** The pipeline run Claude started, live in the conversation: what it is doing now, then what it found. */
+function RunCard({ run }: { run: any }) {
+  const [now, setNow] = useState(Date.now());
+  const active = isActive(run);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), active ? 1000 : 30_000);
+    return () => clearInterval(timer);
+  }, [active]);
+  const current = runStepIndex(run);
+  const outcome = active ? null : runOutcome(run);
+  return <div className="chat-run-card" data-chat-run={active ? "running" : run.phase}>
+    {active ? <Loader2 size={19} className="uh-spin" /> : run.phase === "failed" ? <AlertTriangle size={19} /> : <CheckCircle2 size={19} />}
+    <div>
+      <strong>{run.pipelineName}</strong><span>{active ? ` · running for ${duration(run.startedAt, now)}` : ` · finished ${ago(run.finishedAt, now)}, took ${duration(run.startedAt, run.finishedAt)}`}</span>
+      <p>{active ? runNow(run, run.pipelineSources) : `${outcome!.read} ${outcome!.result}`}</p>
+      <ol aria-label="Progress">{RUN_STEPS.map((label, i) => <li key={label} title={label} data-state={i < current ? "done" : i === current ? "current" : "next"} />)}</ol>
+    </div>
+    <a className="uh-btn" href={!active && run.findings ? "/review" : `/pipeline-live#run-${run.id}`}>{active ? "Watch live" : run.findings ? "Open Review" : "See what happened"} <ArrowUpRight size={14} /></a>
+  </div>;
+}
+
 const toBase64 = (f: File) =>
   new Promise<string>((res, rej) => {
     const r = new FileReader();
@@ -66,15 +99,18 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
   useEffect(() => { const url = new URL(location.href); if (url.searchParams.has("message")) { url.searchParams.delete("message"); history.replaceState(null, "", url); } }, []);
   const [activity, setActivity] = useState("");
   const sendingRef = useRef(false);
-  useEffect(() => { sessionStorage.setItem("uh.chat.draft", cleanDraft(text)); }, [text]);
+  // An unsent draft is kept across page switches, but never a key pasted into it.
+  useEffect(() => { sessionStorage.setItem("uh.chat.draft", cleanDraft(text).replace(/\bddapp_[A-Za-z0-9]+\b|(?<![0-9a-f-])[0-9a-f]{32}(?:[0-9a-f]{8})?(?![0-9a-f-])/gi, "")); }, [text]);
   const [requests, setRequests] = useState<ConnectionRequest[]>([]);
   const [connection, setConnection] = useState<ConnectionRequest | null>(null);
   const [connectionKey, setConnectionKey] = useState("");
   const [permissions, setPermissions] = useState<any[]>([]);
+  const [run, setRun] = useState<any>(null);
   const [deciding, setDeciding] = useState("");
   const [accountKind, setAccountKind] = useState("subscription");
   const [provider, setProvider] = useState("claude");
-  const agentName = provider === "codex" ? "Codex" : "Claude";
+  const agentName = cliName(provider);
+  const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
   const [model, setModel] = useState("claude-opus-5-5");
   const seenRequests = useRef(new Set<string>());
   const [files, setFiles] = useState<{ file: File; url: string }[]>([]);
@@ -85,16 +121,20 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
   const picker = useRef<HTMLInputElement>(null);
   const last = useRef(0);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const intro = msgs.length === 0 || (msgs.length <= 2 && /^Help me (set up ultimatehuman|manage this workspace)\./.test(msgs[0]?.text));
-  const visibleMessages = msgs.filter((m) => !(m.role === "user" && /^Help me (set up ultimatehuman|manage this workspace)\.$/.test(m.text)));
+  const visibleMessages = msgs.filter((m) => !(m.role === "user" && KICKOFF.test(m.text)));
+  // Until the user answers, a fresh workspace shows one thing: the question.
+  const intro = !visibleMessages.some((m) => m.role === "user");
+  const opening = visibleMessages.length === 1 && visibleMessages[0].role === "assistant" ? visibleMessages[0].text.trim() : "";
+  const question = intro && !configured && (!visibleMessages.length || (opening.length <= 140 && !opening.includes("\n"))) ? opening || FIRST_QUESTION : "";
 
   const load = async () => {
     const r = await get("/api/chat");
     setMsgs(r.messages);
     setBusy(r.busy);
-    setActivity(r.activity || `${r.provider === "codex" ? "Codex" : "Claude"} is working…`);
+    setActivity(r.activity || `${cliName(r.provider) || "Claude Code"} is working…`);
     setRequests(r.connections || []);
     setPermissions(r.permissions || []);
+    setRun(r.run || null);
     setAccountKind(r.accountKind || "subscription");
     setProvider(r.provider || "claude");
     setModel(r.model ?? "claude-opus-5-5");
@@ -134,6 +174,8 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
   useEffect(() => {
     if (busy && !intro) end.current?.scrollIntoView({ block: "end" });
   }, [busy, permissions.length, requests.length]);
+  // A run Claude just started appears under its reply: bring it into view.
+  useEffect(() => { if (run?.id && !intro) end.current?.scrollIntoView({ block: "end" }); }, [run?.id]);
 
   const attach = (list: FileList | File[] | null) => {
     const imgs = [...(list ?? [])].filter((f) => f.type.startsWith("image/"));
@@ -181,8 +223,9 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
     >
       <div className="chat-log" data-chat-log>
         <div className="chat-col">
-          {intro && <div className="chat-welcome"><HumanMark /><h2>{configured ? "What’s next?" : "Set up your first pipeline."}</h2><p>{configured ? projectNames.join(" · ") : "Start with one project. Include all of its repositories."}</p></div>}
-          {visibleMessages.map((m) => {
+          {question ? <div className="chat-welcome chat-question"><HumanMark /><h2 data-first-question>{question}</h2></div>
+            : intro && configured && <div className="chat-welcome"><HumanMark /><h2>What’s next?</h2><p>{projectNames.join(" · ")}</p></div>}
+          {(question ? [] : visibleMessages).map((m) => {
             const p = parts(m);
             const files = p.files.length > 0 && (
               <div className="chat-files">
@@ -194,7 +237,7 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
             return (
               <div key={m.id} className={`chat-msg ${m.role}`} data-chat-msg={m.role} data-source={m.source}>
                 <div className="chat-meta">
-                  {m.role === "assistant" && <HumanMark className="chat-avatar" />}<strong>{m.role === "user" ? "You" : "ultimatehuman"}</strong><span className="chat-message-time">{time(m.ts)}</span>{m.source !== "dashboard" && <span className="pill" data-source-tag>{m.source === "cli" ? "CLI" : m.source}</span>}
+                  {m.role === "assistant" && <HumanMark className="chat-avatar" />}<strong data-chat-author>{m.role === "user" ? "You" : m.provider ? [cliName(m.provider), modelName(m.model, modelLabels)].filter(Boolean).join(" · ") : "ultimatehuman"}</strong><span className="chat-message-time">{time(m.ts)}</span>{m.role === "user" && m.source !== "dashboard" && <span className="pill" data-source-tag>{m.source === "cli" ? "Terminal" : "Telegram"}</span>}
                 </div>
                 {/* Like Telegram: your photo above its caption; the agent's files after its text. */}
                 {m.role === "user" && files}
@@ -203,8 +246,9 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
               </div>
             );
           })}
+          {run && !question && <RunCard run={run} />}
           {requests.filter((r) => r.status === "pending").map((r) => <div className="chat-action-card" key={r.id} data-connection-request={r.source}>
-            <Cable size={20} /><div><strong>Connect {r.source === "posthog" ? "PostHog" : "Datadog"}</strong><p>Use your existing {r.source === "posthog" ? "events and errors" : "error logs"}{r.project ? ` for ${r.project}` : ""}.</p></div><button className="uh-btn primary" onClick={() => openConnection(r)}>Connect <ArrowUpRight size={14} /></button>
+            <Cable size={20} /><div><strong>Connect {r.source === "posthog" ? "PostHog" : "Datadog"}</strong><p>{r.lastAttempt ? r.missing?.length ? `Still needed: ${r.missing.join(" and ")}. The rest is saved.` : "Those keys did not pass the access check. Enter the corrected ones here." : `Use your existing ${r.source === "posthog" ? "events and errors" : "error logs"}${r.project ? ` for ${r.project}` : ""}.`}</p></div><button className="uh-btn primary" onClick={() => openConnection(r)}>{r.lastAttempt ? r.missing?.length ? `Add ${r.missing[0]}` : "Enter keys" : "Connect"} <ArrowUpRight size={14} /></button>
           </div>)}
           {permissions.map((p) => <div className="chat-permission" key={p.id} data-chat-permission={p.tool}>
             <div><Terminal size={17} /><strong>{p.tool === "Bash" ? "Run this command?" : `Allow ${agentName} to ${p.tool === "Edit" ? "edit this file" : p.tool === "Write" ? "write this file" : "use " + p.tool}?`}</strong></div>
@@ -251,7 +295,7 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
               data-chat-input
               rows={intro ? 2 : 1}
               value={text}
-              placeholder={intro ? configured ? "What should we investigate?" : "Repository paths or Git URLs…" : `Message ${agentName}…`}
+              placeholder={intro ? configured ? "What should we investigate?" : "Project name, folder or Git URL" : `Message ${agentName}…`}
               onChange={(e) => changeText(e.target.value)}
               onPaste={(e) => {
                 if (e.clipboardData.files.length) {
@@ -268,7 +312,7 @@ export function ChatPage({ disabled = false, initialPrompt = "", configured = fa
             />
             <div className="chat-composer-bar">
               <button type="button" className="btn chat-attach" aria-label="Attach an image" title="Attach an image" onClick={() => picker.current?.click()} data-chat-attach><ImagePlus size={16} /><span>Add context</span></button>
-              <ChatModelPicker current={model} provider={provider} accountKind={accountKind} disabled={busy > 0} onChange={load} />
+              <ChatModelPicker current={model} provider={provider} accountKind={accountKind} disabled={busy > 0} onChange={load} onCatalog={(models) => setModelLabels((known) => ({ ...known, ...Object.fromEntries(models.map((m) => [m.id, m.label])) }))} />
               <button type="submit" className="btn primary chat-send" aria-label="Send message" title={disabled ? `Reconnect ${agentName} to send` : "Send message"} disabled={disabled || (!text.trim() && !files.length)} data-chat-send><ArrowUp size={19} strokeWidth={2} /></button>
             </div>
           </div>

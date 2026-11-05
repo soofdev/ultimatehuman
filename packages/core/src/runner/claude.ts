@@ -55,6 +55,8 @@ export interface ClaudeRunOptions {
   interactive?: {
     permission: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
     activity?: (tool: string) => void;
+    /** The user's own session rights: no sandbox and no approval prompts (Codex); Claude's requests are granted by `permission`. */
+    fullAccess?: boolean;
   };
 }
 

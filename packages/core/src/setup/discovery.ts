@@ -28,7 +28,30 @@ export interface RepositoryDiscovery {
   trackedFiles: number;
   facts: { label: string; kind: string; path: string; detail: string }[];
   trackers: ReturnType<typeof scanRepo>;
+  /** Where the code sends its tracker data, read from the code itself (e.g. DD_SITE=datadoghq.eu). Defaults for the key form. */
+  hints?: { datadogSite?: string; posthogHost?: string };
   error?: string;
+}
+
+const mostFrequent = (values: string[]) => {
+  const counts = new Map<string, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+};
+
+/** Datadog site and PostHog region named in tracked files. Only explicit hosts count; lockfiles and minified files are skipped. */
+async function trackerHints(root: string): Promise<{ datadogSite?: string; posthogHost?: string }> {
+  const grep = (pattern: string) =>
+    git(root, ["grep", "-I", "-h", "-o", "-i", "-E", pattern, "--", ".", ":(exclude)*.lock", ":(exclude)*-lock.json", ":(exclude)*.min.js"])
+      .then((out) => out.toLowerCase().split("\n").filter(Boolean))
+      .catch(() => [] as string[]); // git grep exits 1 when nothing matches
+  const [datadog, posthog] = await Promise.all([
+    grep("(us3\\.|us5\\.|ap1\\.)datadoghq\\.com|datadoghq\\.eu|ddog-gov\\.com|DD_SITE[\"']?[[:space:]]*[=:][[:space:]]*[\"']?datadoghq\\.com"),
+    grep("(eu|us)(\\.i)?\\.posthog\\.com|app\\.posthog\\.com"),
+  ]);
+  const datadogSite = mostFrequent(datadog.map((m) => /datadoghq\.com$/.test(m) && !/^(us3|us5|ap1)\./.test(m) ? "datadoghq.com" : m));
+  const posthogHost = mostFrequent(posthog.map((m) => m.startsWith("eu") ? "https://eu.posthog.com" : "https://us.posthog.com"));
+  return { ...(datadogSite ? { datadogSite } : {}), ...(posthogHost ? { posthogHost } : {}) };
 }
 
 export function githubRepo(remote: string): string | undefined {
@@ -154,6 +177,10 @@ export async function inspectRepository(
         detail: "Potential review area, inferred from filenames",
       });
     result.trackers = scanRepo(root, repo.name);
+    if (result.trackers.some((t) => t.provider === "datadog" || t.provider === "posthog")) {
+      const hints = await trackerHints(root);
+      if (Object.keys(hints).length) result.hints = hints;
+    }
   } catch {
     result.error =
       "This checkout is unavailable. Check its path and Git access, then rescan.";

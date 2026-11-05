@@ -16,7 +16,7 @@ import {
   setEngineEnv,
 } from "@ultimatehuman/core";
 import type { GlobalFlags } from "../flags";
-import { banner, line, spin, c } from "../ui";
+import { banner, line, spin, c, choose, closePrompts } from "../ui";
 import { VERSION } from "./start";
 
 
@@ -38,8 +38,17 @@ export async function welcome(flags: GlobalFlags): Promise<number> {
     const oauth = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     const candidates = flags.provider ? [flags.provider] : ["claude", "codex"] as const;
     const detected = await Promise.all(candidates.map(async (provider) => ({ provider, readiness: await checkProvider(provider, async () => provider === "claude" && oauth ? { CLAUDE_CODE_OAUTH_TOKEN: oauth } : {}) })));
-    const selected = detected.find((d) => d.readiness.authenticated) ?? detected.find((d) => d.readiness.available);
+    const installed = detected.filter((d) => d.readiness.available);
+    let selected = detected.find((d) => d.readiness.authenticated) ?? installed[0];
     if (!selected) { line.err("AI account", "Install Claude Code or Codex CLI and sign in, then run ultimatehuman again."); return 1; }
+    // Both CLIs on this machine: the person picks the default. Unattended installs keep the first signed-in one.
+    if (installed.length > 1 && !flags.nonInteractive && process.stdin.isTTY) {
+      const name = (p: string) => (p === "codex" ? "Codex" : "Claude Code");
+      const i = await choose("Which AI CLI should ultimatehuman use?", installed.map((d) => `${name(d.provider)} ${c.muted(d.readiness.authenticated ? "· signed in" : "· not signed in yet, sign-in opens next")}`), installed.indexOf(selected));
+      closePrompts();
+      selected = installed[i]!;
+      line.sub(`Using ${name(selected.provider)}. You can switch any time in the chat.`);
+    }
     const useCodex = selected.provider === "codex";
     if (!useCodex && oauth) setEngineEnv({ CLAUDE_CODE_OAUTH_TOKEN: oauth });
     await writeConfig({
@@ -113,10 +122,17 @@ export async function welcome(flags: GlobalFlags): Promise<number> {
   }
   const chosen = providerFor(cfg);
   const name = chosen === "codex" ? "Codex" : "Claude";
+  const cli = chosen === "codex" ? "Codex" : "Claude Code";
+  // A first install has no investigations or settings to preserve yet; say only what is wrong.
+  const issue = (a: { reason?: string | undefined; detail: string }) =>
+    !fresh ? a.detail
+    : a.reason === "expired" ? `${cli} is installed, but its sign-in on this machine has expired.`
+    : a.reason === "login" ? `${cli} is installed but not signed in on this machine.`
+    : a.detail;
   let account = await spin("AI account", `checking your existing ${name} connection`, checkAccount);
   if (!account.authenticated && account.available && ["claude_login", "codex_login"].includes(cfg.auth.sources[0]!.kind) && !flags.nonInteractive && process.stdin.isTTY) {
-    line.warn("AI account", account.detail);
-    line.sub(`Opening ${name} sign-in. Complete it in your browser to continue.`);
+    line.warn("AI account", issue(account));
+    line.sub(`Opening ${cli}'s own sign-in (${chosen === "codex" ? "codex login" : "claude auth login"}). Approve it in your browser; setup then continues.`);
     const code = await new Promise<number>((resolve) => {
       const login = spawn(chosen === "codex" ? codexBin() : claudeBin(), chosen === "codex" ? ["login"] : ["auth", "login"], { stdio: "inherit", env: chosen === "codex" ? codexEnv() : claudeEnv({}) });
       login.on("error", () => resolve(1));
@@ -126,8 +142,8 @@ export async function welcome(flags: GlobalFlags): Promise<number> {
   }
   if (account.authenticated) line.ok("AI account", `Reusing your existing ${name} account · access verified`);
   else {
-    line.warn("AI account", account.detail);
-    if (account.command) line.sub(`Reconnect with: ${account.command}. Your project and pipeline settings are saved.`);
+    line.warn("AI account", issue(account));
+    if (account.command) line.sub(fresh ? `Sign in with: ${account.command}, then run this command again.` : `Reconnect with: ${account.command}. Your project and pipeline settings are saved.`);
   }
   let cwd = process.cwd();
   try { cwd = execFileSync("git", ["rev-parse", "--show-toplevel"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { /* The conversation asks for the repository. */ }

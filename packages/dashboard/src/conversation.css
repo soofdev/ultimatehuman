@@ -454,6 +454,19 @@
 .chat-action-card strong { font-size: 14px; font-weight: 550; }
 .chat-action-card p { font-size: 12px; color: #748167; line-height: 1.5; margin-top: 4px; }
 .chat-action-card .uh-btn { flex-shrink: 0; }
+.chat-run-card { display: flex; align-items: center; gap: 15px; border: 1px solid #d6e1c7; border-radius: 12px; background: #fff; padding: 18px 20px; }
+.chat-run-card[data-chat-run="running"] { border-color: #b7d97a; box-shadow: 0 0 0 4px #d3ff5f33; }
+.chat-run-card > svg { color: #6a9a2a; flex-shrink: 0; }
+.chat-run-card[data-chat-run="failed"] > svg { color: #b7791f; }
+.chat-run-card > div { flex: 1; min-width: 0; }
+.chat-run-card strong { font-size: 14px; font-weight: 550; }
+.chat-run-card > div > span { font-size: 12px; color: #748167; }
+.chat-run-card p { font-size: 12px; color: #4f5d44; line-height: 1.5; margin-top: 4px; }
+.chat-run-card ol { display: flex; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; max-width: 260px; }
+.chat-run-card li { flex: 1; height: 4px; border-radius: 2px; background: #e6eadf; }
+.chat-run-card li[data-state="done"] { background: #6aa51c; }
+.chat-run-card li[data-state="current"] { background: #b9e04f; }
+.chat-run-card .uh-btn { flex-shrink: 0; }
 .source-form { display: grid; gap: 18px; }
 .source-purpose { color: #6d785f; font-size: 14px; line-height: 1.6; margin: 0; }
 .source-form .uh-field { margin: 0; gap: 7px; }
@@ -498,9 +511,31 @@
   .conversation-chat .chat-intro-mode { padding: 28px 20px 20px; }
   .chat-welcome { margin-bottom: 8px; }
   .chat-welcome h2 { font-size: 28px; }
-  .chat-action-card { flex-wrap: wrap; padding: 16px; gap: 12px; }
+  .chat-action-card, .chat-run-card { flex-wrap: wrap; padding: 16px; gap: 12px; }
   .chat-action-card > div { min-width: 170px; }
   .chat-action-card .uh-btn { margin-left: auto; }
   .chat-composer-model { font-size: 10px; padding-left: 10px; }
   .chat-composer-bar { gap: 10px; }
+}
+
+/* First run: the question is the whole screen. */
+.chat-question { margin-bottom: 4px; }
+.chat-question > svg { width: 34px; height: 34px; margin-bottom: 26px; }
+.chat-question h2 { font-size: clamp(36px, 4.6vw, 58px); line-height: 1.04; letter-spacing: -2.2px; font-weight: 680; color: #10170c; max-width: 15ch; text-wrap: balance; }
+.conversation-chat .chat-intro-mode .chat-row textarea { font-size: 16px; }
+/* Each key field says where its value comes from. */
+.source-key-field { display: grid; gap: 7px; }
+/* Keys are plain text fields so browsers never offer to save them as passwords; outside the field being edited they stay unreadable. */
+.source-form .source-secret { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.source-form .source-secret:not(:focus):not(:placeholder-shown) { filter: blur(4px); }
+.source-field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.source-field-head label { font-size: 13px; font-weight: 500; }
+.source-field-link { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: #4f6a35; white-space: nowrap; }
+.source-field-hint { display: block; font-size: 12px; line-height: 1.5; color: #6d785f; }
+.source-field-hint .source-scopes { margin-top: 6px; align-items: center; }
+.source-field-hint .source-scopes > span { width: auto; margin: 0 2px 0 0; font-size: 12px; }
+.source-private .source-docs { margin: 0 0 0 auto; }
+@media (max-width: 760px) {
+  .chat-question h2 { font-size: 34px; letter-spacing: -1.4px; }
+  .chat-question > svg { margin-bottom: 18px; }
 }

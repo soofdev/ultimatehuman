@@ -96,6 +96,16 @@ require('node:readline').createInterface({input:process.stdin}).on('line',l=>{co
   await writeFile(state,'{}');
   pass('Provider switching preserves both model sets, pipeline settings and shared history without mixing CLI session IDs');
 
+  // Default: the chat works like the user's own Codex session, without approval prompts.
+  const fullReply=(await api('/api/chat',{text:'PERMISSION',wait:true})).reply;
+  assert.equal(fullReply.text,'Command completed.');assert.equal(fullReply.provider,'codex');assert.equal(fullReply.model,'gpt-second');
+  assert.equal(await readFile(calls+'.approved','utf8'),'executed');
+  const chatThreads=(await messages()).filter(m=>['thread/start','thread/resume'].includes(m.method)&&m.params.developerInstructions?.includes('local ultimatehuman installation'));
+  assert(chatThreads.length&&chatThreads.every(m=>m.params.sandbox==='danger-full-access'&&m.params.approvalPolicy==='never'));
+  assert((await messages()).filter(m=>m.method==='turn/start').at(-1).params.sandboxPolicy.type==='dangerFullAccess');
+  await rm(calls+'.approved');
+  pass('Codex chat runs commands with the user’s own session rights, without approval prompts, and labels replies with CLI and model');
+  await api('/api/config/features',{chatApprovals:true});
   await api('/api/chat',{text:'PERMISSION'},202);
   const request=await until(async()=>(await api('/api/chat')).permissions[0],'permission');
   await api('/api/chat/provider',{provider:'claude'},409);
@@ -107,7 +117,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',l=>{co
   await api('/api/chat/permissions/'+approved.id,{allow:true});
   await until(async()=>!(await api('/api/chat')).busy,'approved command');
   assert.equal(await readFile(calls+'.approved','utf8'),'executed');
-  pass('Codex commands use the existing in-chat approval flow; provider switching waits for active work');
+  await api('/api/config/features',{chatApprovals:false});
+  pass('With approvals switched on, Codex commands use the in-chat approval flow; provider switching waits for active work');
 
   const repo=join(root,'repo');await mkdir(repo);await writeFile(join(repo,'package.json'),'{"name":"codex-test"}');
   await exec('git',['init','-q',repo]);await exec('git',['-C',repo,'add','.']);await exec('git',['-C',repo,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Fixture']);
