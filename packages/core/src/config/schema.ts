@@ -141,6 +141,8 @@ const FeaturesSchema = z
       .describe("On: new findings wait in the cockpit's Awaiting validation stage until you promote them. Off: they go straight to Needs decision."),
     fixLoop: z.boolean().default(false).describe("Reserved: fix legs that open PRs proven in a browser. No effect in this build."),
     ledger: z.boolean().default(false).describe("Reserved: per-leg spend/usage ledger. No effect in this build."),
+    chatApprovals: z.boolean().default(false)
+      .describe("On: the setup chat asks before it runs a command or changes a file. Off: it works like your own Claude Code or Codex session, without approval prompts."),
   })
   .prefault({});
 export type Features = z.infer<typeof FeaturesSchema>;

@@ -30,6 +30,8 @@ const MIGRATIONS: string[] = [
      created_at TEXT NOT NULL, json TEXT NOT NULL);`,
   // The one shared setup chat. source = the door the message came through (dashboard, cli, telegram); the agent's replies carry the door they answer.
   `CREATE TABLE chat (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, text TEXT NOT NULL, source TEXT NOT NULL, ts TEXT NOT NULL);`,
+  // Which CLI and model wrote an assistant reply, shown next to the reply.
+  `ALTER TABLE chat ADD COLUMN meta TEXT;`,
 ];
 
 export type ChatSource = "dashboard" | "cli" | "telegram";
@@ -39,6 +41,9 @@ export interface ChatMessage {
   text: string;
   source: ChatSource;
   ts: string;
+  /** Assistant replies: the CLI ("claude" | "codex") and the model that produced them. */
+  provider?: string;
+  model?: string;
 }
 
 export interface ProposalRuling {
@@ -102,7 +107,7 @@ export class Store {
     const fresh = !existsSync(path);
     this.db = new DatabaseSync(path);
     if (fresh) chmodSync(path, 0o600);
-    this.db.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
     const row = this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as { value: string } | undefined;
     let version = row ? Number(row.value) : 0;
     while (version < MIGRATIONS.length) {
@@ -234,13 +239,43 @@ export class Store {
 
   addChat(m: Omit<ChatMessage, "id" | "ts">): ChatMessage {
     const ts = new Date().toISOString();
-    const r = this.db.prepare("INSERT INTO chat(role,text,source,ts) VALUES(?,?,?,?)").run(m.role, m.text, m.source, ts);
+    const meta = m.provider || m.model ? JSON.stringify({ provider: m.provider, model: m.model }) : null;
+    const r = this.db.prepare("INSERT INTO chat(role,text,source,ts,meta) VALUES(?,?,?,?,?)").run(m.role, m.text, m.source, ts, meta);
     return { ...m, id: Number(r.lastInsertRowid), ts };
   }
 
   /** The last `limit` messages, oldest first. */
   listChat(limit = 200): ChatMessage[] {
-    return (this.db.prepare("SELECT * FROM (SELECT * FROM chat ORDER BY id DESC LIMIT ?) ORDER BY id").all(limit) as any[]).map((r) => ({ id: r.id, role: r.role, text: r.text, source: r.source, ts: r.ts }));
+    return (this.db.prepare("SELECT * FROM (SELECT * FROM chat ORDER BY id DESC LIMIT ?) ORDER BY id").all(limit) as any[]).map((r) => {
+      let meta: { provider?: string; model?: string } = {};
+      try { meta = r.meta ? JSON.parse(r.meta) : {}; } catch { /* an unreadable label is omitted */ }
+      return { id: r.id, role: r.role, text: r.text, source: r.source, ts: r.ts, ...(meta.provider ? { provider: meta.provider } : {}), ...(meta.model ? { model: meta.model } : {}) };
+    });
+  }
+
+  /** Replaces saved credential values pasted into earlier messages. */
+  scrubChat(values: readonly string[], replacement: string): void {
+    const update = this.db.prepare("UPDATE chat SET text = replace(text, ?, ?) WHERE instr(text, ?) > 0");
+    let changed = 0;
+    for (const value of values) if (value.length >= 8) changed += Number(update.run(value, replacement, value).changes);
+    if (changed) this.forgetOldPages();
+  }
+
+  /** Rewrites stored messages through `fn`, e.g. to remove credentials an older version kept. Returns how many changed. */
+  rewriteChat(fn: (text: string) => string): number {
+    const update = this.db.prepare("UPDATE chat SET text = ? WHERE id = ?");
+    let changed = 0;
+    for (const row of this.db.prepare("SELECT id, text FROM chat").all() as { id: number; text: string }[]) {
+      const next = fn(row.text);
+      if (next !== row.text) { update.run(next, row.id); changed++; }
+    }
+    if (changed) this.forgetOldPages();
+    return changed;
+  }
+
+  /** A replaced message must not survive in the write-ahead log or in freed pages. */
+  private forgetOldPages(): void {
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
 }
 

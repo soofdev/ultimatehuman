@@ -175,6 +175,9 @@ function respond() {
   assert.equal((await api('/api/pipelines')).config.length, 0);
   assert.equal((await api('/api/runs')).runs.length, 0);
   assert.equal((await api('/api/workspace')).provider.authenticated, false);
+  const signedOut = await api('/api/workspace/provider/check', {});
+  assert.equal(signedOut.provider.reason, 'login');
+  assert.match(signedOut.provider.detail, /installed but not signed in/);
   pass('An installed but signed-out CLI blocks activation without creating a run or pipeline');
   await writeFile(env.UH_FIXTURE_LOG + '.expired', '');
   const expired = await api('/api/workspace/provider/check', {});

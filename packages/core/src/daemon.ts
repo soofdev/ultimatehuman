@@ -27,13 +27,13 @@ import { gradeSetup, gradeProbes } from "./setup/grade";
 import { setupStatusText } from "./setup/pending";
 import { checkPending, currentGrade } from "./setup/concierge";
 import { loadEngineEnv } from "./envfile";
-import { Chat, mergePatch } from "./chat/chat";
+import { Chat, mergePatch, FIRST_QUESTION, INIT_KEY } from "./chat/chat";
 import { chatActions } from "./chat/actions";
-import { ConnectionRequests, SOURCE_GUIDES } from "./chat/connections";
+import { ConnectionRequests, SOURCE_GUIDES, sortCredentials } from "./chat/connections";
 import { validationGateFor } from "./pipelines/registry";
 import { ChatTelegram } from "./chat/telegram";
 import { allowedFile, fileType, saveToInbox, sentNote } from "./chat/files";
-import { workspaceRoutes, type ServiceControl } from "./setup/workspace";
+import { workspaceRoutes, pendingKey, pendingValues, discoveredHint, type ServiceControl } from "./setup/workspace";
 import { claudeModelCatalog } from "./runner/models";
 import { providerFor, agentModel, selectProvider, type AgentProvider } from "./runner/provider";
 import { checkProvider } from "./setup/provider";
@@ -101,9 +101,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
 
   let server: RunningServer | null = null;
   const notifier = new Notifier({ plugins: opts.plugins, getConfig: () => config, configPath, log });
+  // Set once the chat exists: a run the chat started reports back to it when it ends.
+  let runEnded: ((run: Record<string, any>) => void) | null = null;
   const emit = (ev: unknown) => {
     server?.broadcast(ev);
     notifier.handle(ev as any);
+    const event = ev as { type?: string; run?: Record<string, any> };
+    if (event.type === "run.phase" && event.run && ["done", "failed"].includes(event.run.phase)) runEnded?.(event.run);
   };
   let runtime: PipelineRuntime | null = null;
   const executor = new PassExecutor({
@@ -214,7 +218,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   const workspace = workspaceRoutes({ home, config: () => config, patch: patchConfig, plugins: opts.plugins, store, runtime: rt, credentials: resolveCredentials, runnerEnv, emit, ...(opts.service ? { service: opts.service } : {}) });
   const connections = new ConnectionRequests(store, emit);
   const connecting = new Set<string>();
-  const operations = chatActions({ routes: workspace, config: () => config, configPath, registry, runtime: rt, plugins: opts.plugins, emit, connections });
+  const operations = chatActions({ routes: workspace, config: () => config, configPath, registry, runtime: rt, plugins: opts.plugins, emit, connections, store });
   const chat = new Chat({
     home,
     store,
@@ -225,7 +229,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         mergePatch(raw, p);
         for (const plugin of opts.plugins) for (const field of plugin.manifest.credentials.filter((f) => f.secret)) {
           const value = (p.plugins as Record<string, any> | undefined)?.[plugin.manifest.id]?.credentials?.[field.key];
-          if (value !== undefined && !SecretRef.safeParse(value).success) throw new Error(`Use the connection form to save ${field.label}; use a secret reference in configuration.`);
+          if (value !== undefined && !SecretRef.safeParse(value).success) throw new Error(`Save ${field.label} with connect_source or the connection form; configuration only holds a secret reference.`);
         }
       });
     },
@@ -236,6 +240,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     context: operations.context,
     executeAction: operations.execute,
   });
+  runEnded = (run) => chat.runFinished({ ...run, pipelineName: config.pipelines.find((p) => p.id === pipelineOfRun(run as any))?.name ?? run.pipelineName });
   /** The only places chat files may be served or sent from: the install home and the configured repos. */
   const chatRoots = () => [home, ...config.repos.map((r) => r.path)];
   const chatTelegram = new ChatTelegram({ store, chat, home, chatRoots, getConfig: () => config, configPath, log, emit, patch: async (p) => { await patchConfig((raw) => mergePatch(raw, p)); } });
@@ -608,7 +613,16 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         messages: chat.history(), busy: chat.busy(), activity: chat.progress(),
         model: agentModel(config, "chat"),
         provider: providerFor(config),
-        connections: connections.list(), permissions: chat.permissions(),
+        // An open request whose keys failed says what is still needed, so its card can ask only for that.
+        connections: connections.list().map((r) => r.status === "pending" && r.lastAttempt ? { ...r, missing: store.getKv<{ missing?: string[] }>(pendingKey(r.source))?.missing ?? [] } : r),
+        permissions: chat.permissions(),
+        // The run in progress, or one that finished in the last 15 minutes: the chat shows it live where it was started.
+        run: (() => {
+          const latest = rt.current() ? publicRun(rt.current()!) : store.listRuns(1)[0];
+          if (!latest || (["done", "failed"].includes(latest.phase) && Date.now() - Date.parse(latest.finishedAt ?? latest.startedAt) > 15 * 60_000)) return null;
+          const pipeline = config.pipelines.find((p) => p.id === pipelineOfRun(latest));
+          return { ...latest, pipelineId: pipelineOfRun(latest), pipelineName: pipeline?.name ?? latest.pipelineName ?? pipelineOfRun(latest), pipelineSources: pipeline?.sources ?? [] };
+        })(),
         accountKind: config.auth.sources[0]?.kind === "anthropic_api_key" ? "api" : "subscription",
         cliCommand: [process.execPath, process.argv[1]].filter(Boolean).map((s) => `'${s!.replace(/'/g, "'\\''")}'`).join(" "),
       } }),
@@ -652,14 +666,21 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           return { json: { ok: true, model: agentModel(config, "chat") } };
         } catch (e) { return { status: 503, json: { error: (e as Error).message } }; }
       },
-      "GET /api/chat/connections": async () => ({ json: { sources: opts.plugins.filter((p) => p.manifest.id in SOURCE_GUIDES).map((p) => ({
+      "GET /api/chat/connections": async () => ({ json: { sources: opts.plugins.filter((p) => p.manifest.id in SOURCE_GUIDES).map((p) => {
+        // What an earlier submission or a pasted key left saved, sorted into the right fields: the form only asks for the rest.
+        const pending = sortCredentials(p.manifest.id, pendingValues(store, opts.plugins, p.manifest.id)).values;
+        const saved = config.plugins[p.manifest.id]?.credentials ?? {};
+        return {
         id: p.manifest.id, name: p.manifest.displayName,
-        fields: p.manifest.credentials.map((f) => ({ ...f, value: f.secret ? "" : String(config.plugins[p.manifest.id]?.credentials[f.key] ?? f.default ?? "") })),
+        fields: p.manifest.credentials.map((f) => ({ ...f,
+          value: f.secret ? "" : String(saved[f.key] ?? pending[f.key] ?? (discoveredHint(store, config, p.manifest.id, f.key) || f.default) ?? ""),
+          ...(f.secret && (saved[f.key] || pending[f.key]) ? { saved: true } : {}) })),
         configured: config.plugins[p.manifest.id]?.enabled === true,
         savedOptions: config.plugins[p.manifest.id]?.options ?? {},
         scopes: p.manifest.requiredScopes,
         guide: SOURCE_GUIDES[p.manifest.id as keyof typeof SOURCE_GUIDES],
-      })) } }),
+        };
+      }) } }),
       "POST /api/chat/connections/request": async (_r, body) => {
         try { return { json: { request: connections.request(body.source, body.project) } }; }
         catch (e) { return { status: 400, json: { error: (e as Error).message } }; }
@@ -671,19 +692,28 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
         if (connecting.has(request.id)) return { status: 409, json: { error: "This connection is already being checked." } };
         connecting.add(request.id);
         try {
-          const result = await workspace["POST /api/workspace/connections/:id"]!(req, body, { id: request.source });
+          // The form always accepts: keys are saved, then the chat explains anything that failed.
+          const result = await workspace["POST /api/workspace/connections/:id"]!(req, { ...body, acceptFailure: true }, { id: request.source });
           if ((result.status ?? 200) >= 400) {
-            // Provider error bodies must never echo a credential back into the UI.
+            // Provider error bodies must never echo a credential back into the UI. Site and host are not secrets.
+            const secretFields = new Set(opts.plugins.find((p) => p.manifest.id === request.source)?.manifest.credentials.filter((f) => f.secret).map((f) => f.key));
             let json = JSON.stringify(result.json);
-            for (const value of Object.values(body.credentials ?? {})) if (typeof value === "string" && value.length >= 8) json = json.split(value).join("[redacted]");
+            for (const [field, value] of Object.entries(body.credentials ?? {})) if (secretFields.has(field) && typeof value === "string" && value.length >= 8) json = json.split(value).join("[key hidden]");
             return { ...result, json: JSON.parse(json) };
           }
-          connections.complete(request.id);
+          const outcome = result.json as any;
           const name = request.source === "posthog" ? "PostHog" : "Datadog";
-          const turn = chat.send(`${name} is connected${request.project ? ` for ${request.project}` : ""}. Continue setting up the first pipeline.`, "dashboard", `The user submitted the in-chat connection form. The engine verified read access. ${JSON.stringify(result.json)}. Continue the previously requested setup/run, preserving existing pipelines and original defaults. Never ask for the saved keys again.`);
-          void turn.reply.catch(() => {});
+          if (outcome.ok) {
+            connections.completeSource(request.source);
+            const turn = chat.send(`${name} is connected${request.project ? ` for ${request.project}` : ""}.`, "dashboard", `The user submitted the in-chat key form. The engine verified read access${outcome.corrected ? ` after correcting the submission (${outcome.corrected})` : ""}: ${JSON.stringify(outcome.probe)}. In one short sentence say what is connected${outcome.corrected ? " and what was corrected" : ""}, then continue setting up the first pipeline the user asked for, preserving existing pipelines and original defaults. Never ask for the saved keys again.`);
+            void turn.reply.catch(() => {});
+          } else {
+            connections.attempted(request.id);
+            const turn = chat.send(`I entered my ${name} keys.`, "dashboard", `The user submitted the in-chat key form. The keys are saved outside the chat, but the read-access check FAILED. Engine result (authoritative): ${JSON.stringify(outcome)}. Follow rule 4: at most three short lines on what is still missing and the fastest way to get it, one link on the user's real site, nothing already explained earlier in this conversation. Values the engine kept are reused automatically: the user only provides what is missing, in the form card or pasted here. Never claim the connection works.`);
+            void turn.reply.catch(() => {});
+          }
           emit({ type: "workspace.updated" });
-          return result;
+          return { json: { ok: outcome.ok === true, saved: true } };
         } finally { connecting.delete(request.id); }
       },
       "POST /api/chat/permissions/:id": async (_r, body, params) => {
@@ -693,6 +723,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
       },
       "POST /api/chat/start": async (_r, body) => {
         if (chat.history(1).length || chat.busy()) return { json: { started: false } };
+        if (body.directory) store.setKv(INIT_KEY, { directory: String(body.directory).slice(0, 2000) });
+        if (!config.repos.length && !body.repository) {
+          // The opening screen is one question; asking it needs no model call.
+          const message = store.addChat({ role: "assistant", text: FIRST_QUESTION, source: "dashboard" });
+          emit({ type: "chat.message", message });
+          return { json: { started: true } };
+        }
         const context = [body.repository ? `Use these repositories for the first project: ${String(body.repository).slice(0, 2000)}.` : config.repos.length ? "Continue from the existing repositories and pipelines. Do not repeat completed setup." : "Ask which project to start with and which repos belong to it. Keep the opening question to two short sentences.", body.directory ? `Installation directory (context only): ${String(body.directory).slice(0, 2000)}.` : ""].join(" ");
         const turn = chat.send(config.repos.length ? "Help me manage this workspace." : "Help me set up ultimatehuman.", body.source === "cli" ? "cli" : "dashboard", context);
         void turn.reply.catch(() => {});

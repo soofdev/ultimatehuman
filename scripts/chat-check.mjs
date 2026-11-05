@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
+import { DatabaseSync } from 'node:sqlite';
 const WebSocket = createRequire(resolve('packages/core/package.json'))('ws');
 
 const exec = promisify(execFile);
@@ -82,7 +83,12 @@ function respond(){
    } else if(match){
      const results=JSON.parse(match[1]);
      result=results.some(r=>!r.ok)?'Operation refused: '+results.filter(r=>!r.ok).map(r=>r.error).join('; '):'Done. '+JSON.stringify(results.map(r=>r.result||r.message));
-   } else if(text.startsWith('ACTION ')) result='\`\`\`workspace-action\\n'+text.slice(7)+'\\n\`\`\`';
+   } else if(text.startsWith('I entered my ')) {
+     result='DIAGNOSIS '+(/read-access check FAILED/.test(prompt)?'failed':'unknown');
+   } else if(text.startsWith('[engine] ')) {
+     result='REPORT '+(/Engine result \\(authoritative\\)/.test(prompt)?'with result':'missing');
+   } else if(text.startsWith('ACTION_FILE ')) result='\`\`\`workspace-action\\n'+fs.readFileSync(text.slice(12).trim(),'utf8')+'\\n\`\`\`';
+   else if(text.startsWith('ACTION ')) result='\`\`\`workspace-action\\n'+text.slice(7)+'\\n\`\`\`';
    else if(text.startsWith('PATCH ')) result='\`\`\`config-patch\\n'+text.slice(6)+'\\n\`\`\`';
    else result='Which repository should I use? Send a local path or Git URL.';
  }else if(!prompt.includes('single word'))result=prompt.includes('proposals')?JSON.stringify({proposals:[]}):JSON.stringify({verdict:'no_finding',reason:'No supported finding in this fixture.'});
@@ -96,12 +102,12 @@ function respond(){
  assert.match(installed.stdout,/Claude Code subscription/);
  await waitFor(async()=>!(await api('/api/chat')).busy,'initial Claude prompt');
  let history=(await api('/api/chat')).messages;
- assert.equal(history.length,2);assert.equal(history[0].source,'cli');assert.match(history[1].text,/Which repository/);
+ assert.equal(history.length,1);assert.equal(history[0].role,'assistant');assert.equal(history[0].text,'Which project do you want to start with?');
  let cfg=(await api('/api/config')).config;
  assert.deepEqual(cfg.repos,[]);assert.deepEqual(cfg.pipelines,[]);
  const calls=(await readFile(env.UH_FIXTURE_LOG,'utf8')).trim().split('\n').map(JSON.parse);
- assert(calls[0].prompt.includes('single word'));assert(calls.some(c=>c.prompt.includes('Installation directory')&&c.args.includes('--append-system-prompt')));
- pass('Fresh installation verifies Claude first, starts one shared setup conversation, and waits for a repository');
+ assert(calls[0].prompt.includes('single word'));assert(!calls.some(c=>c.args.includes('--append-system-prompt')),'The opening question needs no model call');
+ pass('Fresh installation verifies Claude first and opens the shared conversation with one question, without a model call');
 
  const beforeCatalog=await readFile(env.UH_FIXTURE_LOG,'utf8');
  assert.equal((await fetch(base+'/api/chat/models')).status,401);
@@ -112,12 +118,19 @@ function respond(){
  assert(catalog.models[0].aliases.includes('opus'));assert(catalog.models[0].aliases.includes('default'));
  assert(catalogs.every(c=>JSON.stringify(c)===JSON.stringify(catalog)));
  assert.equal(await readFile(env.UH_FIXTURE_LOG,'utf8'),beforeCatalog,'Reading model metadata must not send an inference prompt');
- assert.equal((await api('/api/chat')).messages.length,2);
+ assert.equal((await api('/api/chat')).messages.length,1);
+ const firstAnswer=await chat('sample-app');
+ assert.equal(firstAnswer.provider,'claude');assert.equal(firstAnswer.model,'claude-opus-5-5');
+ const firstCall=(await readFile(env.UH_FIXTURE_LOG,'utf8')).trim().split('\n').map(JSON.parse).at(-1);
+ assert(firstCall.prompt.includes('Installation directory'),'The first answer knows where ultimatehuman was started');
+ assert(firstCall.prompt.includes('assistant [dashboard]: Which project do you want to start with?'),'The model sees the question it is answering');
  await api('/api/chat/model',{model:'invented-model'},400);
  const beforeModel=(await api('/api/config')).config;
  await api('/api/chat/model',{model:'claude-sonnet-5-5'});
  assert.deepEqual((await api('/api/config')).config,{...beforeModel,models:{...beforeModel.models,chat:'claude-sonnet-5-5'}},'Only chat changes; pipeline models and every other setting stay intact');
- await chat('Check the selected chat model');
+ const labelled=await chat('Check the selected chat model');
+ assert.equal(labelled.provider,'claude');assert.equal(labelled.model,'claude-sonnet-5-5');
+ assert.equal((await api('/api/chat')).messages.at(-1).model,'claude-sonnet-5-5','Replies keep the CLI and model that wrote them');
  const selectedCall=(await readFile(env.UH_FIXTURE_LOG,'utf8')).trim().split('\n').map(JSON.parse).at(-1);
  assert.equal(selectedCall.args[selectedCall.args.indexOf('--model')+1],'claude-sonnet-5-5');
  assert(selectedCall.args.some(a=>a.startsWith('--resume=')),'Changing models preserves the conversation');
@@ -155,7 +168,15 @@ function respond(){
  await waitFor(async()=>{const runs=(await api('/api/runs')).runs;return runs.length&&runs[0].phase==='done';},'pipeline completion');
  assert.equal((await api('/api/runs')).runs[0].findings,0);
  assert.equal((await api('/api/pipelines')).config[0].enabled,false);
- pass('A chat run request reaches the real runtime without changing the schedule or inventing findings');
+ const report=await waitFor(async()=>(await api('/api/chat')).messages.find(m=>m.role==='assistant'&&m.text.startsWith('REPORT')),'run report in chat');
+ assert.equal(report.text,'REPORT with result','When a run the chat started finishes, the agent reports its result unprompted');
+ const afterReport=(await api('/api/chat')).messages;
+ assert(!afterReport.some(m=>m.role==='user'&&m.text.startsWith('[engine]')),'The engine follow-up is not shown as something the user said');
+ const chatRun=(await api('/api/chat')).run;
+ assert.equal(chatRun.id,(await api('/api/runs')).runs[0].id,'The chat shows the run it started');
+ assert.equal(chatRun.phase,'done');assert.equal(chatRun.pipelineId,'chat-security');assert(chatRun.pipelineName);
+ assert(Array.isArray(chatRun.phases)&&chatRun.phases.length>0&&Array.isArray(chatRun.pipelineSources));assert.equal(chatRun.signals,undefined,'Raw signals never travel with the chat');
+ pass('A chat run request reaches the real runtime without changing the schedule or inventing findings; the chat shows that run and reports its result when it ends');
 
  const guidelines=await api('/api/instructions?pipeline=chat-security');
  const mission=guidelines.briefs.find(b=>b.id==='mission');
@@ -170,6 +191,13 @@ function respond(){
  assert.equal((await api('/api/config')).raw,before);
  pass('Guideline edits retain version checks; unknown operations and inline source secrets are refused');
 
+ const unprompted=await chat('NATIVE_PERMISSION allow');
+ assert.equal(unprompted.text,'Command completed.');
+ assert.equal(await readFile(join(home,'approved-command.txt'),'utf8'),'executed');
+ assert.equal((await api('/api/chat')).permissions.length,0);
+ await rm(join(home,'approved-command.txt'));
+ pass('By default the chat runs commands like the user’s own Claude Code session, without approval prompts');
+ await api('/api/config/features',{chatApprovals:true});
  await api('/api/chat',{text:'NATIVE_PERMISSION deny'},202);
  let permission=await waitFor(async()=>(await api('/api/chat')).permissions[0],'native permission');
  assert.equal(permission.tool,'Bash');
@@ -193,7 +221,8 @@ function respond(){
  const runningCall=queuedCalls.findLast(c=>c.prompt.endsWith('User request: NATIVE_PERMISSION allow'));
  assert.equal(queuedCall.args[queuedCall.args.indexOf('--model')+1],'claude-sonnet-5-5','Queued messages retain the model selected when sent');
  assert.equal(runningCall.args[runningCall.args.indexOf('--model')+1],'claude-opus-5-5','Changing the selection must not interrupt an active turn');
- pass('Native Claude shell requests pause, decline without execution, and run only after approval');
+ await api('/api/config/features',{chatApprovals:false});
+ pass('With approvals switched on, Claude shell requests pause, decline without execution, and run only after approval');
 
  const secret='phx_ChatConnectionFixture0123456789';
  const sourceStub=createServer(async(req,res)=>{
@@ -214,8 +243,18 @@ function respond(){
   await api('/api/chat/connections/request',{source:'sentry'},400);
   const credentials={apiKey:secret,host:'http://127.0.0.1:'+sourceStub.address().port};
   const endpoint='/api/chat/connections/'+request.id;
-  await api(endpoint,{credentials:{...credentials,apiKey:'phx_InvalidChatFixture0123456789'}},400);
-  assert.equal((await api('/api/chat')).connections.find(r=>r.id===request.id).status,'pending');
+  const rejected=await api(endpoint,{credentials:{...credentials,apiKey:'phx_InvalidChatFixture0123456789'}});
+  assert.deepEqual(rejected,{ok:false,saved:true});
+  await waitFor(async()=>!(await api('/api/chat')).busy,'failed-key explanation');
+  const afterReject=await api('/api/chat');
+  const open=afterReject.connections.find(r=>r.id===request.id);
+  assert.equal(open.status,'pending');assert.equal(open.lastAttempt.verified,false);
+  assert.equal(afterReject.messages.at(-2).text,'I entered my PostHog keys.');assert.equal(afterReject.messages.at(-1).text,'DIAGNOSIS failed');
+  const explained=(await readFile(env.UH_FIXTURE_LOG,'utf8')).trim().split('\n').map(JSON.parse).filter(c=>c.args.includes('--append-system-prompt')).at(-1).prompt;
+  assert.match(explained,/PostHog rejected the key/);assert(explained.includes('UH_PENDING_POSTHOG_APIKEY'));
+  assert(!explained.includes('phx_InvalidChatFixture'),'The explanation turn sees references, never the key');
+  assert((await readFile(join(home,'engine.env'),'utf8')).includes('UH_PENDING_POSTHOG_APIKEY='));
+  assert.equal((await api('/api/config')).config.plugins.posthog,undefined,'Keys that failed never become the configured connection');
   const selection=await api(endpoint,{credentials},409);assert.equal(selection.projects.length,2);
   assert(!(await readFile(join(home,'engine.env'),'utf8').catch(()=>'' )).includes(secret));
   await api(endpoint,{credentials,options:{projectId:'22'}});
@@ -225,6 +264,7 @@ function respond(){
   assert(connected.messages.some(m=>m.text.includes('PostHog is connected')));
   assert.equal((await stat(join(home,'engine.env'))).mode&0o777,0o600);
   assert((await readFile(join(home,'engine.env'),'utf8')).includes(secret));
+  assert(!(await readFile(join(home,'engine.env'),'utf8')).includes('UH_PENDING_POSTHOG'),'A verified connection removes the failed attempt');
   assert(!JSON.stringify(connected).includes(secret));
   assert(!(await api('/api/config')).raw.includes(secret));
   const metadata=await api('/api/chat/connections');assert(!JSON.stringify(metadata).includes(secret));
@@ -232,8 +272,81 @@ function respond(){
   await chat('I pasted '+secret);
   assert(!JSON.stringify(await api('/api/chat')).includes(secret));
   assert(!(await readFile(env.UH_FIXTURE_LOG,'utf8')).includes(secret));
-  pass('In-chat source setup verifies keys and project selection, stores secrets privately, and resumes setup without leaking keys');
+  pass('The key form always accepts: a rejected key is saved apart, the chat explains it, and a verified key connects without leaking');
  }finally{sourceStub.closeAllConnections();await new Promise(r=>sourceStub.close(r));}
+
+ // Datadog, the user's real mistake: a key ID (UUID) in the API key field. Then keys pasted into the chat, in the wrong fields.
+ const ddApi='0123456789abcdef0123456789abcdef',ddApp='ddapp_FixtureApplicationKey012345678901',keyId='c0ffee00-1234-4abc-9def-0123456789ab';
+ const datadog=createServer(async(req,res)=>{
+  for await(const chunk of req){}
+  res.setHeader('content-type','application/json');
+  if(req.headers['dd-api-key']!==ddApi){res.writeHead(403);res.end('{"errors":["Forbidden"]}');return;}
+  if(req.url.startsWith('/api/v1/validate')){res.end('{"valid":true}');return;}
+  if(req.headers['dd-application-key']!==ddApp){res.writeHead(403);res.end('{"errors":["Forbidden"]}');return;}
+  res.end(req.url.startsWith('/api/v2/logs/events')?'{"data":[]}':'{"events":[]}');
+ });
+ await new Promise(r=>datadog.listen(0,'127.0.0.1',r));
+ try{
+  const apiBase='http://127.0.0.1:'+datadog.address().port;
+  await chat('ACTION '+JSON.stringify({action:'request_connection',source:'datadog',project:'sample-app'}));
+  const ddRequest=(await api('/api/chat')).connections.find(r=>r.source==='datadog'&&r.status==='pending');
+  const modelPrompts=async()=>(await readFile(env.UH_FIXTURE_LOG,'utf8')).trim().split('\n').map(JSON.parse).filter(c=>c.args.includes('--append-system-prompt')).map(c=>c.prompt);
+  // Exactly what happened in the VM run: the ddapp_ Application key in the API key box, its key ID (UUID) in the Application key box, EU site.
+  assert.deepEqual(await api('/api/chat/connections/'+ddRequest.id,{credentials:{apiKey:ddApp,appKey:keyId,site:'datadoghq.eu',apiBase}}),{ok:false,saved:true});
+  await waitFor(async()=>!(await api('/api/chat')).busy,'Datadog explanation');
+  const ddPrompt=(await modelPrompts()).at(-1);
+  assert.match(ddPrompt,/Application key \(ddapp_…\) was in the API key field\. It was moved/);
+  assert.match(ddPrompt,/held a key ID \(a UUID\)/);assert.match(ddPrompt,/"missing":\["API key"\]/);
+  assert.match(ddPrompt,/at most three short lines/);assert(!/step by step/.test(ddPrompt),'A failed check no longer asks for a step-by-step walkthrough');
+  assert(ddPrompt.includes('datadoghq.eu'),'The site is not a secret and stays readable');assert(!ddPrompt.includes('[redacted]'));
+  assert(!ddPrompt.includes(keyId)&&!ddPrompt.includes(ddApp));
+  let envFile=await readFile(join(home,'engine.env'),'utf8');
+  assert(envFile.includes('UH_PENDING_DATADOG_APPKEY='+ddApp)&&!envFile.includes('UH_PENDING_DATADOG_APIKEY='),'The moved key is kept in its right field only');
+  const card=(await api('/api/chat')).connections.find(r=>r.id===ddRequest.id);
+  assert.deepEqual(card.missing,['API key']);
+  const form=(await api('/api/chat/connections')).sources.find(s=>s.id==='datadog');
+  assert.equal(form.fields.find(f=>f.key==='site').value,'datadoghq.eu','The form reopens on the site the user chose');
+  assert.equal(form.fields.find(f=>f.key==='appKey').saved,true);assert.equal(form.fields.find(f=>f.key==='apiKey').saved,undefined);
+  assert(!JSON.stringify(form).includes(ddApp));
+  pass('A key in the wrong box is moved, a key ID is set aside, and the card and form ask only for the missing API key');
+
+  // The user then pastes only the missing key into the chat: it is saved before storage, checked with the saved key, and never reaches the model.
+  const beforePaste=(await modelPrompts()).length;
+  const reply=await chat('here is the API key '+ddApi);
+  const ddConfig=(await api('/api/config')).config.plugins.datadog;
+  assert.equal(ddConfig.enabled,true);assert.equal(ddConfig.credentials.apiKey,'${UH_WORKSPACE_DATADOG_APIKEY}');assert.equal(ddConfig.credentials.site,'datadoghq.eu');
+  envFile=await readFile(join(home,'engine.env'),'utf8');
+  assert(envFile.includes('UH_WORKSPACE_DATADOG_APIKEY='+ddApi)&&envFile.includes('UH_WORKSPACE_DATADOG_APPKEY='+ddApp));
+  assert(!envFile.includes('UH_PENDING_DATADOG'));
+  assert.equal((await api('/api/chat')).connections.find(r=>r.id===ddRequest.id).status,'connected');
+  const pastePrompts=(await modelPrompts()).slice(beforePaste);
+  assert.equal(pastePrompts.length,1);assert.match(pastePrompts[0],/checked automatically/);assert.match(pastePrompts[0],/"ok":true/);
+  assert(pastePrompts.every(p=>!p.includes(ddApi)&&!p.includes(ddApp)),'A pasted key never reaches the model');
+  assert.match(reply.text,/^Done\./);
+  let db=new DatabaseSync(join(home,'state.db'),{readOnly:true});
+  let stored=db.prepare('SELECT text FROM chat').all().map(r=>r.text).join('\n');db.close();
+  assert(!stored.includes(ddApi)&&!stored.includes(ddApp),'Pasted keys never reach the stored conversation');
+  assert(stored.includes('here is the API key [Datadog API key saved outside the chat]'));
+  assert(!JSON.stringify(await api('/api/chat')).includes(ddApi));
+  pass('A key pasted in chat is saved before the message is stored, checked with the saved key, and the connection works without the model seeing it');
+
+  // Raw values an agent passes itself (e.g. found in a .env file) are still sorted by format.
+  const agentAction=join(root,'agent-action.json');
+  await writeFile(agentAction,JSON.stringify({action:'connect_source',source:'datadog',credentials:{apiKey:ddApp,appKey:ddApi,apiBase}}));
+  const fixed=await chat('ACTION_FILE '+agentAction);
+  assert.match(fixed.text,/in each other's fields/);
+  db=new DatabaseSync(join(home,'state.db'),{readOnly:true});
+  stored=db.prepare('SELECT text FROM chat').all().map(r=>r.text).join('\n');db.close();
+  assert(!stored.includes(ddApi)&&!stored.includes(ddApp));
+  pass('Keys an agent passes in swapped fields are corrected and scrubbed from history');
+
+  const before=(await api('/api/config')).config.plugins.datadog;
+  await writeFile(agentAction,JSON.stringify({action:'connect_source',source:'datadog',credentials:{apiKey:'ffffffffffffffffffffffffffffffff',appKey:ddApp,apiBase}}));
+  await chat('ACTION_FILE '+agentAction);
+  assert.deepEqual((await api('/api/config')).config.plugins.datadog,before,'A failed replacement never breaks a working connection');
+  assert((await readFile(join(home,'engine.env'),'utf8')).includes('UH_WORKSPACE_DATADOG_APIKEY='+ddApi));
+  pass('Failed replacement keys are kept apart and never overwrite a working connection');
+ }finally{datadog.closeAllConnections();await new Promise(r=>datadog.close(r));}
 
  await chat('PATCH '+JSON.stringify({chat:{telegram:{apiBase:telegramBase}}}));
  assert.equal((await fetch(base+'/api/chat/telegram')).status,401);

@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, ArrowUpRight, CheckCircle2, ChevronDown, Clock3, Loader2, Settings2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Activity, AlertTriangle, ArrowUpRight, Check, CheckCircle2, ChevronDown, Clock3, Loader2, Settings2 } from "lucide-react";
+import { RUN_STEPS, ago, candidateCount, duration, isActive, plural, runNow, runOutcome, runStepIndex } from "./run-story";
 import LiveClient from "../app/(app)/administration/pipeline-live/LiveClient";
 import { workspaceLive } from "./workspace-live";
 import "./pipeline-live.css";
@@ -8,12 +9,53 @@ import { Modal } from "./WorkspaceModal";
 const human = (s: string) => s?.replaceAll("_", " ") || "";
 const when = (s?: string) => s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 
+/** The run happening now, or the last one: what it is doing or did, in plain words, at the top of the page. */
+export function RunNow({ run, pipeline, reviewHref }: { run: any; pipeline?: any; reviewHref: string }) {
+  const [now, setNow] = useState(Date.now());
+  const active = isActive(run);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), active ? 1000 : 30_000);
+    return () => clearInterval(timer);
+  }, [active]);
+  const current = runStepIndex(run);
+  const outcome = active ? null : runOutcome(run);
+  const state = active ? (run.phase === "parked" ? "paused" : "running") : run.phase === "failed" ? "failed" : "finished";
+  return <section className="uh-live-now" data-live-now={state} aria-live="polite">
+    <div className="uh-live-now-head">
+      <span className="uh-live-now-eyebrow">{state === "running" ? <><span className="uh-live-pulse" />Running now</> : state === "paused" ? "Paused" : state === "failed" ? "Last run stopped" : "Last run"}</span>
+      <h2>{run.pipelineName || run.pipelineId}</h2>
+      <p data-live-now-line>{active ? <>Running for {duration(run.startedAt, now)} · {runNow(run, pipeline?.sources)}</> : <>Finished {ago(run.finishedAt, now)} · took {duration(run.startedAt, run.finishedAt)}{pipeline?.scheduleText ? ` · runs ${pipeline.scheduleText}` : ""}</>}</p>
+    </div>
+    <ol className="uh-live-now-steps">{RUN_STEPS.map((label, i) => <li key={label} data-state={i < current ? "done" : i === current ? (state === "paused" ? "paused" : "current") : "next"}>
+      <span>{i < current ? <Check size={12} strokeWidth={3} /> : i === current && state === "running" ? <Loader2 size={12} className="uh-spin" /> : null}</span>{label}
+    </li>)}</ol>
+    <dl className="uh-live-now-counts">
+      <div><dt>Signals read</dt><dd>{run.signalsCollected ?? 0}</dd></div>
+      <div><dt>Candidates</dt><dd>{candidateCount(run)}</dd></div>
+      <div><dt>Findings</dt><dd>{run.findings ?? 0}</dd></div>
+    </dl>
+    {outcome && <div className="uh-live-now-story">
+      <p>{outcome.read} {outcome.candidates}</p>
+      {outcome.setAside.map((line) => <p key={line} className="uh-live-now-aside">Set aside {line}</p>)}
+      <p><strong>{outcome.result}</strong></p>
+    </div>}
+    <div className="uh-live-now-links"><a className="uh-link" href={`#run-${run.id}`}>See every step <ArrowUpRight size={13} /></a>{run.findings > 0 && <a className="uh-btn primary" href={reviewHref}>Open Review <ArrowUpRight size={14} /></a>}</div>
+  </section>;
+}
+
 export default function PipelineLive({ data, pipelines, project, offline, act, chatFirst = false }: any) {
   const snapshot = useMemo(() => {
     const value = workspaceLive(data, pipelines, project, offline);
     return chatFirst ? { ...value, settingsHref: "/chat?message=Show%20my%20pipelines", projectsHref: "/chat?message=Help%20me%20run%20a%20pipeline" } : value;
   }, [data, pipelines, project, offline, chatFirst]);
   const [blockerId, setBlockerId] = useState("");
+  // Arriving from the chat's "See what happened": open that run's steps once it is on the page.
+  const linkedRun = typeof location !== "undefined" && location.hash.startsWith("#run-") ? location.hash.slice(1) : "";
+  const linkedLoaded = !!linkedRun && snapshot.runs.some((r: any) => `run-${r.id}` === linkedRun);
+  useEffect(() => {
+    const detail = linkedLoaded ? document.getElementById(linkedRun) : null;
+    if (detail instanceof HTMLDetailsElement) { detail.open = true; detail.scrollIntoView({ block: "start" }); }
+  }, [linkedLoaded, linkedRun]);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const blocker = snapshot.blocked.find((b) => b.id === blockerId);
@@ -28,11 +70,11 @@ export default function PipelineLive({ data, pipelines, project, offline, act, c
         const active = !["done", "failed"].includes(run.phase);
         const steps = run.steps || [];
         return <details className="uh-live-run" key={run.id} id={`run-${run.id}`} open={active || undefined}>
-          <summary>{run.phase === "failed" ? <AlertTriangle size={18} /> : run.phase === "parked" ? <Clock3 size={18} /> : active ? <Loader2 size={18} className="uh-spin" /> : <CheckCircle2 size={18} />}<div><strong>{run.pipelineName || run.pipelineId}</strong><span>{human(run.phase)} · {when(run.startedAt)}</span></div><span>{run.signalsCollected ?? 0} signals</span><span>{run.findings ?? 0} findings</span><span>${(run.costUsd || 0).toFixed(3)}</span><ChevronDown size={16} /></summary>
+          <summary>{run.phase === "failed" ? <AlertTriangle size={18} /> : run.phase === "parked" ? <Clock3 size={18} /> : active ? <Loader2 size={18} className="uh-spin" /> : <CheckCircle2 size={18} />}<div><strong>{run.pipelineName || run.pipelineId}</strong><span>{human(run.phase)} · {when(run.startedAt)}</span></div><span>{plural(run.signalsCollected ?? 0, "signal")}</span><span>{plural(run.findings ?? 0, "finding")}</span><span>${(run.costUsd || 0).toFixed(3)}</span><ChevronDown size={16} /></summary>
           <div className="uh-live-run-body">
             <div className="uh-live-phases">{(run.phases || []).map((p: any, i: number) => <div key={i} data-state={p.status}><span className={`uh-dot ${p.status === "failed" ? "warn" : ""}`} /><strong>{human(p.phase)}</strong><span>{p.status}</span></div>)}</div>
             {steps.length > 0 && <div className="uh-live-steps">{steps.map((s: any, i: number) => <div key={i}><span className={`uh-live-step-state ${s.status}`}>{human(s.status)}</span><div><strong>{human(s.step)} · {s.clusterTitle || "Investigation"}</strong>{s.note && <p>{s.note}</p>}<small>{s.model || "Evidence check"}{s.startedAt ? ` · ${when(s.startedAt)}` : ""}</small></div>{s.costUsd != null && <span>${s.costUsd.toFixed(3)}</span>}</div>)}</div>}
-            {(run.sources || []).map((s: any) => <p className="uh-live-source" key={s.pluginId}><strong>{s.pluginId}</strong> · {s.signals} signals · {s.ok ? "Read completed" : "Needs attention"}{s.note ? ` · ${s.note}` : ""}</p>)}
+            {(run.sources || []).map((s: any) => <p className="uh-live-source" key={s.pluginId}><strong>{s.pluginId}</strong> · {plural(s.signals ?? 0, "signal")} · {s.ok ? "Read completed" : "Needs attention"}{s.note ? ` · ${s.note}` : ""}</p>)}
             {(run.error || run.emptyReason) && <p className="uh-live-run-note">{run.error || run.emptyReason}</p>}
             {(run.notes || []).map((n: string, i: number) => <p className="uh-live-run-note" key={i}>{n}</p>)}
             <small className="uh-muted">Run {run.id} · {run.repos?.map((r: any) => `${r.name} @ ${r.commit?.slice(0, 7) || "local checkout"}`).join(", ")}</small>
@@ -54,11 +96,12 @@ export default function PipelineLive({ data, pipelines, project, offline, act, c
     }
   }}>
     <LiveClient initial={snapshot} snapshot={snapshot} workspace activity={activity}>
+      {(snapshot.active[0] || snapshot.runs[0]) && <RunNow run={snapshot.active[0] || snapshot.runs[0]} pipeline={(data.pipelines.pipelines || pipelines).find((p: any) => p.id === (snapshot.active[0] || snapshot.runs[0]).pipelineId)} reviewHref={snapshot.reviewHref} />}
       <div className="uh-live-system">
         <div><span>Engine</span><strong><span className={`uh-dot ${offline ? "warn" : ""}`} />{offline ? "Reconnecting" : "Online"}</strong></div>
         <div><span>Configured pipelines</span><strong>{pipelines.length}<small>{pipelines.filter((p: any) => p.enabled && p.schedule !== "manual").length} scheduled</small></strong></div>
-        <div><span>Active agents</span><strong>{snapshot.agents.length}<small>{snapshot.agents.map((s: any) => human(s.step)).join(", ") || "No model call running"}</small></strong></div>
-        <div><span>Recent run cost</span><strong>${snapshot.cost.toFixed(3)}<small>{snapshot.runs.length} recorded runs · {data.workspace.reserve}% reserve</small></strong></div>
+        <div><span>Active agents</span><strong>{snapshot.agents.length}<small>{snapshot.agents.join(", ") || (snapshot.active.length ? "Reading and grouping signals, no model call" : "No model call running")}</small></strong></div>
+        <div><span>Recent run cost</span><strong>${snapshot.cost.toFixed(3)}<small>{plural(snapshot.runs.length, "recorded run")} · {data.workspace.reserve}% reserve</small></strong></div>
       </div>
     </LiveClient>
     {blockerId && <Modal title={blocker ? `${blocker.kind} · ${blocker.name}` : "Access verified"} close={() => setBlockerId("")}>

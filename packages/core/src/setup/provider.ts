@@ -69,11 +69,13 @@ export async function checkClaudeProvider(runnerEnv: () => Promise<Record<string
         return { ...identity, available: true, authenticated: false, label: "Claude Code", reason: "expired", detail: "Your existing Claude login has expired and could not refresh automatically. Reconnect the account to resume investigations; your workspace setup is preserved.", command: "claude auth login", verifiedAt };
       if (probe.limitHit && status.loggedIn === true)
         return { ...identity, available: true, authenticated: true, label: "Claude Code", detail: "Claude account detected. The account is currently at its usage limit.", verifiedAt };
+      if (status.loggedIn === false)
+        return { ...identity, available: true, authenticated: false, label: "Claude Code", reason: "login", detail: "Claude Code is installed but not signed in on this machine.", command: "claude auth login", verifiedAt };
       return { ...identity, available: true, authenticated: false, label: "Claude Code", reason: "unverified", detail: "The configured Claude account could not complete the connection check. Check its login and model access, then retry.", command: "claude auth status", verifiedAt };
     }
     if (status.loggedIn === true)
       return { ...identity, available: true, authenticated: true, label: "Claude Code", detail: "Sign-in detected for the engine’s configured account. Model access is checked when the investigation starts." };
-    return { ...identity, available: true, authenticated: false, label: "Claude Code", reason: "login", detail: "The engine could not verify an active Claude session. Check the existing account connection to continue.", command: "claude auth login" };
+    return { ...identity, available: true, authenticated: false, label: "Claude Code", reason: "login", detail: status.loggedIn === false ? "Claude Code is installed but not signed in on this machine." : "The engine could not verify an active Claude session. Check the existing account connection to continue.", command: "claude auth login" };
   } catch {
     return { ...identity, available: true, authenticated: false, label: "Claude Code", detail: "The engine could not verify its configured AI credentials. Check the account and try again.", command: "claude auth status" };
   }

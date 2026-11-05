@@ -47,6 +47,12 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     if (text === 'EXIT') { process.exit(1); }
     if (text === 'FAIL') { complete('Partial output', 'failed', { message: 'Fixture turn failed' }); return; }
     if (text === 'PERMISSION') {
+      // Like the real CLI: "never" asks nobody; the sandbox alone decides whether the command can run.
+      if ((p.approvalPolicy || params.approvalPolicy) === 'never') {
+        const full = [p.sandboxPolicy?.type, params.sandbox].some((x) => x === 'dangerFullAccess' || x === 'danger-full-access');
+        if (full) fs.writeFileSync(process.env.UH_CODEX_LOG + '.approved', 'executed');
+        complete(full ? 'Command completed.' : 'Command declined.'); return;
+      }
       pending = true;
       send({ method: 'item/started', params: { threadId: thread, item: { id: 'shell', type: 'commandExecution', command: 'printf approved', cwd: params.cwd } } });
       send({ id: 999, method: 'item/commandExecution/requestApproval', params: { threadId: thread, itemId: 'shell', command: 'printf approved', cwd: params.cwd, reason: 'Fixture command' } });

@@ -11,12 +11,15 @@ import { BRIEF_IDS, type BriefId } from "../instructions/instructions";
 import { loadEngineEnv } from "../envfile";
 import { publicRun } from "../pass/executor";
 import { SOURCE_GUIDES, type ConnectionRequests } from "./connections";
+import { pendingKey } from "../setup/workspace";
+import type { Store } from "../store/store";
 
 export function chatActions(d: {
   routes: Record<string, Route>; config: () => Config; configPath: string;
   registry: PipelineRegistry; runtime: PipelineRuntime; plugins: readonly Plugin[];
   emit: (event: unknown) => void;
   connections: ConnectionRequests;
+  store: Store;
 }) {
   const call = async (route: string, body: unknown = {}, params: Record<string, string> = {}) => {
     const handler = d.routes[route];
@@ -32,6 +35,8 @@ export function chatActions(d: {
       templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, description: t.description, defaults: t.pipeline })),
       connectors: d.plugins.map((p) => ({ ...p.manifest, collectionAvailable: ["posthog", "datadog"].includes(p.manifest.id), guide: SOURCE_GUIDES[p.manifest.id as keyof typeof SOURCE_GUIDES] })),
       connectionRequests: d.connections.list(),
+      // Keys the user submitted whose access check failed: references and the diagnosis, never values.
+      failedConnections: Object.fromEntries(["posthog", "datadog"].map((id) => [id, d.store.getKv(pendingKey(id))]).filter(([, v]) => v)),
       schema: configJsonSchema(),
     }),
     execute: async (a: Record<string, unknown>): Promise<unknown> => {
@@ -42,7 +47,7 @@ export function chatActions(d: {
         case "activation": return call("POST /api/workspace/activation", a);
         case "investigate": return call("POST /api/workspace/investigate", a);
         case "install_service": return call("POST /api/workspace/service");
-        case "request_connection": return { request: d.connections.request(a.source, a.project), awaitingUser: true, message: "The connection form is available in chat. Wait for the user to submit it; do not ask for a terminal command or a key in a message." };
+        case "request_connection": return { request: d.connections.request(a.source, a.project), awaitingUser: true, message: "The key form is open in chat. Wait for the user to submit it." };
         case "connect_source": {
           const source = String(a.source ?? "");
           const plugin = d.plugins.find((p) => p.manifest.id === source && p.manifest.kind === "source");
@@ -50,15 +55,24 @@ export function chatActions(d: {
           loadEngineEnv();
           const values = (a.credentials || {}) as Record<string, unknown>;
           const credentials: Record<string, string> = {};
+          const pasted: string[] = [];
           for (const field of plugin.manifest.credentials) {
             const value = values[field.key];
-            if (value === undefined) continue;
-            if (field.secret) {
-              if (!SecretRef.safeParse(value).success) throw new Error(`Use request_connection to collect ${field.label} in the connection form; chat only accepts secret references.`);
-              credentials[field.key] = await resolveSecretRefs(value as SecretRefValue, d.configPath);
-            } else credentials[field.key] = String(value);
+            if (value === undefined || value === null || value === "") continue;
+            if (SecretRef.safeParse(value).success) credentials[field.key] = await resolveSecretRefs(value as SecretRefValue, d.configPath);
+            else {
+              // A key the user pasted into the conversation: the engine stores it outside the chat.
+              credentials[field.key] = String(value);
+              if (field.secret) pasted.push(String(value));
+            }
           }
-          return call("POST /api/workspace/connections/:id", { credentials, options: a.options }, { id: source });
+          const handler = d.routes["POST /api/workspace/connections/:id"]!;
+          const response = await handler({} as IncomingMessage, { credentials, options: a.options, acceptFailure: true }, { id: source });
+          if (pasted.length) d.store.scrubChat(pasted, `[${plugin.manifest.displayName} key saved outside the chat]`);
+          const result = response.json as any;
+          if ((response.status ?? 200) >= 400 && !result?.projects) throw new Error(result?.error || "Operation refused.");
+          if (result?.ok) d.connections.completeSource(source);
+          return result;
         }
         case "run_pipeline": {
           const id = String(a.pipelineId ?? "");

@@ -1,3 +1,5 @@
+import { runAgents } from "./run-story";
+
 /** Maps real engine activity to the original live flow. No sample work is inserted. */
 export function workspaceLive(data: any, pipelines: any[], project: string, offline = false) {
   const ids = new Set(pipelines.map((p) => p.id));
@@ -66,7 +68,8 @@ export function workspaceLive(data: any, pipelines: any[], project: string, offl
   }
   const recorded = [...runs.map((r: any) => r.startedAt), ...tickets.map((t) => t.createdAt)].filter(Boolean).sort();
   return { tickets, stages, read_at: new Date().toISOString(), historyStart: recorded[0] || null, sync: null, reviewHref: link("review", { tab: "decide" }), offline,
-    runs, queued, active, blocked, agents: active.flatMap((r: any) => (r.steps || []).filter((s: any) => s.status === "running" && s.model)),
+    // A step's model is only known once its call returns, so a running step counts as an active agent on its own.
+    runs, queued, active, blocked, agents: active.flatMap(runAgents),
     cost: runs.reduce((sum: number, r: any) => sum + (r.costUsd || 0), 0),
     settingsHref: link("pipelines"), projectsHref: link("projects") };
 }

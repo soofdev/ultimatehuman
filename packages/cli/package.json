@@ -1,6 +1,6 @@
 {
   "name": "ultimatehuman",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": false,
   "files": ["dist", "LICENSE", "NOTICE", "LICENSING.md", "THIRD_PARTY_NOTICES.txt"],
   "engines": { "node": ">=22.13.0" },

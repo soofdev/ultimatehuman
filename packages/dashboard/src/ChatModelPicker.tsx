@@ -3,7 +3,7 @@ import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { get, post } from "./api";
 
 type Model = { id: string; label: string; description: string; aliases: string[] };
-export function ChatModelPicker({ current, provider, accountKind, disabled, onChange }: { current: string; provider: string; accountKind: string; disabled: boolean; onChange: () => Promise<void> }) {
+export function ChatModelPicker({ current, provider, accountKind, disabled, onChange, onCatalog }: { current: string; provider: string; accountKind: string; disabled: boolean; onChange: () => Promise<void>; onCatalog?: (models: Model[]) => void }) {
   const [catalog, setCatalog] = useState<{ models: Model[]; default: string; current: string } | null>(null);
   const [providers, setProviders] = useState<{ id: string; label: string; available: boolean; authenticated: boolean }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -13,7 +13,7 @@ export function ChatModelPicker({ current, provider, accountKind, disabled, onCh
   const load = async (refresh = false) => {
     const request = ++generation.current;
     setLoading(true); setError("");
-    try { const result = await get(`/api/chat/models${refresh ? "?refresh=1" : ""}`); if (request === generation.current) { setCatalog(result); setError(result.error || ""); } }
+    try { const result = await get(`/api/chat/models${refresh ? "?refresh=1" : ""}`); if (request === generation.current) { setCatalog(result); setError(result.error || ""); onCatalog?.(result.models ?? []); } }
     catch (e) { if (request === generation.current) setError((e as Error).message); }
     finally { if (request === generation.current) setLoading(false); }
   };
@@ -35,9 +35,9 @@ export function ChatModelPicker({ current, provider, accountKind, disabled, onCh
     finally { setSaving(false); }
   };
   return <div className="chat-model-control">
-    <div className="chat-model-select" title="AI account for chat and pipeline runs">
+    <div className="chat-model-select chat-cli-select" title="The CLI that runs this chat and your pipelines">
       <select aria-label="AI provider" value={provider} disabled={disabled || saving} onChange={(e) => void switchProvider(e.target.value)}>
-        {[{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }].map((p) => {
+        {[{ id: "claude", label: "Claude Code" }, { id: "codex", label: "Codex" }].map((p) => {
           const detected = providers.find((d) => d.id === p.id);
           return <option key={p.id} value={p.id}>{p.label}{detected && !detected.available ? " · Not installed" : detected && !detected.authenticated ? " · Sign in" : ""}</option>;
         })}
@@ -47,7 +47,7 @@ export function ChatModelPicker({ current, provider, accountKind, disabled, onCh
       {(loading || saving) && <Loader2 size={12} className="uh-spin" />}
       <select aria-label="Chat model" aria-describedby={error ? "chat-model-error" : undefined} value={model?.id || selected} onChange={(e) => void change(e.target.value)} disabled={disabled || loading || saving || !catalog?.models.length}>
         {!model && <option value={selected}>{label}{catalog?.models.length ? " (current)" : ""}</option>}
-        {catalog?.models.map((m) => <option key={m.id} value={m.id} title={m.description}>{m.label}{m.id === catalog.default ? " · Default" : ""}</option>)}
+        {catalog?.models.map((m) => <option key={m.id} value={m.id} title={m.description}>{m.label}</option>)}
       </select><ChevronDown size={12} />
     </div>
     {error && <div className="chat-model-error" id="chat-model-error" role="status"><span>{error}</span><button type="button" disabled={loading} onClick={() => void load(true)}><RefreshCw size={11} />Retry</button></div>}
