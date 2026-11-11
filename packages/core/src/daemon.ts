@@ -2,7 +2,8 @@ import { watch } from "node:fs";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, dirname, basename } from "node:path";
-import type { Finding, Plugin } from "@ultimatehuman/sdk";
+import type { Finding, OutputContext, OutputPlugin, Plugin } from "@ultimatehuman/sdk";
+import { readOnlyHttp, outboundHttp } from "./plugins/http";
 import type { Config } from "./config/schema";
 import JSON5 from "json5";
 import { configJsonSchema, migrateConfig, MODEL_CHOICES, MODEL_STAGES, DEFAULT_MODEL, SecretRef } from "./config/schema";
@@ -134,13 +135,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
     return want ? registry.get(want) ?? null : null;
   };
 
-  const output = () => opts.plugins.find((p) => p.manifest.kind === "output" && config.plugins[p.manifest.id]);
+  const output = () => opts.plugins.find((p): p is OutputPlugin => p.manifest.kind === "output" && !!config.plugins[p.manifest.id] && config.plugins[p.manifest.id]!.enabled !== false);
+  /** Where an output plugin files: a GitHub repo, or a tracker project (e.g. a Jira project key). */
+  const outputTarget = (o: OutputPlugin | undefined, f?: Finding): string => {
+    const creds = (o ? config.plugins[o.manifest.id]?.credentials : undefined) ?? {};
+    if (o && o.manifest.id !== "github") return String((creds as Record<string, unknown>).projectKey ?? (creds as Record<string, unknown>).repo ?? o.manifest.displayName);
+    return (f && config.repos.find((r) => r.name === f.repo)?.issueRepo) ?? (o ? String((creds as Record<string, unknown>).repo ?? "") : "");
+  };
   const issueFor = (id: string) => {
     const f = store.getFinding(id);
     if (!f) return null;
     const o = output();
     const labels = ((o && (config.plugins[o.manifest.id]?.options?.labels as string[])) ?? ["ultimatehuman"]) as string[];
-    const repo = config.repos.find((r) => r.name === f.repo)?.issueRepo ?? (o ? String(config.plugins[o.manifest.id]?.credentials?.repo ?? "") : "");
+    const repo = outputTarget(o, f);
     return { f, issue: renderIssue(f, labels), repo, dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true };
   };
 
@@ -188,7 +195,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
   };
   const dryRunOutput = () => {
     const o = output();
-    return { dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true, repo: o ? String(config.plugins[o.manifest.id]?.credentials?.repo ?? "") : "" };
+    return { dryRun: o ? config.plugins[o.manifest.id]?.options?.dryRun !== false : true, repo: outputTarget(o) };
   };
 
   /** Dashboard edits: patch the file as written (not the defaulted config), validate, write, and use it at once. */
@@ -393,16 +400,43 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle> {
           log(`accepted (no issue tracker configured): ${x.issue.title}`);
           return { json: { dryRun: true, message: "accepted - no issue tracker is configured", issue: x.issue, repo: "" } };
         }
-        const ctx = { credentials: await resolveCredentials(o.manifest.id).catch(() => ({ repo: x.repo })), options: config.plugins[o.manifest.id]?.options ?? {}, http: null as any, log: () => {}, signal: new AbortController().signal };
-        const filed = await (o as any).output.file(ctx, x.f);
-        const rec = { at: new Date().toISOString(), repo: x.repo, ref: filed.ref, title: x.issue.title };
-        (x.f as any).dryRunPreview = rec;
-        store.saveFinding(x.f);
-        log(`dry run: would create issue in ${x.repo}: ${x.issue.title}`);
+        const id = o.manifest.id;
+        const name = o.manifest.displayName;
+        const credentials = await resolveCredentials(id).catch(() => ({ repo: x.repo }) as Record<string, string>);
+        const signal = AbortSignal.timeout(60_000);
+        const ctx: OutputContext = {
+          credentials,
+          options: config.plugins[id]?.options ?? {},
+          http: readOnlyHttp(id, o.readOnlyPostAllowlist ?? [], log, signal),
+          // A network write exists only for live filing, and only to the hosts the plugin derives from its own credentials.
+          ...(!x.dryRun && o.sendHosts ? { send: outboundHttp(id, o.sendHosts(credentials), log, signal) } : {}),
+          log: (_level, m) => log(`${id}: ${m}`),
+          signal,
+        };
+        let filed: { ref: string; url: string };
+        try {
+          filed = await o.output.file(ctx, x.f);
+        } catch (e) {
+          const msg = (e as Error).message;
+          log(`${id}: filing "${x.issue.title}" failed: ${msg}`);
+          return { status: 502, json: { error: `${name} did not accept the issue: ${msg}`, dryRun: x.dryRun } };
+        }
         const cid = (x.f as any).clusterId as string | undefined;
-        if (cid) rule(cid, "file", null, { dryRun: x.dryRun, ref: filed.ref, repo: x.repo });
+        if (x.dryRun) {
+          (x.f as any).dryRunPreview = { at: new Date().toISOString(), repo: x.repo, ref: filed.ref, title: x.issue.title };
+          store.saveFinding(x.f);
+          log(`dry run: would create issue in ${x.repo}: ${x.issue.title}`);
+          if (cid) rule(cid, "file", null, { dryRun: true, ref: filed.ref, repo: x.repo });
+          else emit({ type: "finding.updated", finding: x.f });
+          return { json: { dryRun: true, message: `dry run - would create issue in ${x.repo}`, issue: x.issue, repo: x.repo } };
+        }
+        x.f.filedIssue = { ref: filed.ref, url: filed.url, filedAt: new Date().toISOString(), filedBy: "human" };
+        x.f.status = "filed";
+        store.saveFinding(x.f);
+        log(`${id}: filed ${filed.ref} (${filed.url}): ${x.issue.title}`);
+        if (cid) rule(cid, "file", null, { dryRun: false, ref: filed.ref, url: filed.url, repo: x.repo });
         else emit({ type: "finding.updated", finding: x.f });
-        return { json: { dryRun: true, message: `dry run - would create issue in ${x.repo}`, issue: x.issue, repo: x.repo } };
+        return { json: { dryRun: false, message: `Filed as ${filed.ref} in ${name}.`, ref: filed.ref, url: filed.url, issue: x.issue, repo: x.repo } };
       },
       "POST /api/findings/:id/dismiss": async (_r, body, p) => {
         const f = store.getFinding(p.id!);

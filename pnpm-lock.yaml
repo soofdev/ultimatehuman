@@ -29,6 +29,9 @@ importers:
       '@ultimatehuman/plugin-github':
         specifier: workspace:*
         version: link:../plugins/github
+      '@ultimatehuman/plugin-jira':
+        specifier: workspace:*
+        version: link:../plugins/jira
       '@ultimatehuman/plugin-posthog':
         specifier: workspace:*
         version: link:../plugins/posthog
@@ -117,6 +120,12 @@ importers:
         version: link:../../sdk
 
   packages/plugins/github:
+    dependencies:
+      '@ultimatehuman/sdk':
+        specifier: workspace:*
+        version: link:../../sdk
+
+  packages/plugins/jira:
     dependencies:
       '@ultimatehuman/sdk':
         specifier: workspace:*

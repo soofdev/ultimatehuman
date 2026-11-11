@@ -54,7 +54,7 @@ export function notifyHosts(plugin: { sendHosts: readonly string[]; hostOption?:
 const LOOPBACK = /^(127\.\d+\.\d+\.\d+|localhost|\[::1\])(:\d+)?$/;
 
 /**
- * Outbound HTTP handed to notify plugins: POST only, and only to the hosts in
+ * Outbound HTTP handed to notify plugins and live output filing: POST only, and only to the hosts in
  * `notifyHosts` (https; plain http only on loopback). Anything else throws before a byte leaves.
  */
 export function outboundHttp(pluginId: string, hosts: readonly string[], log: (m: string) => void, signal?: AbortSignal): OutboundHttp {
@@ -64,8 +64,8 @@ export function outboundHttp(pluginId: string, hosts: readonly string[], log: (m
       const allowed = hosts.includes(u.host) || hosts.includes(u.hostname);
       if (!allowed || (u.protocol !== "https:" && !(u.protocol === "http:" && LOOPBACK.test(u.host)))) {
         const why = allowed ? "plain http is only allowed on loopback" : "not one of its sendHosts";
-        log(`refused POST to ${u.host} for notify plugin ${pluginId}: ${why}`);
-        throw new WriteRefusedError(`notify plugin ${pluginId} tried POST ${u.protocol}//${u.host}: ${why}`);
+        log(`refused POST to ${u.host} for plugin ${pluginId}: ${why}`);
+        throw new WriteRefusedError(`plugin ${pluginId} tried POST ${u.protocol}//${u.host}: ${why}`);
       }
       const form = typeof FormData !== "undefined" && body instanceof FormData;
       const r = await fetch(url, {

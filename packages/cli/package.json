@@ -31,6 +31,7 @@
     "@ultimatehuman/plugin-sentry": "workspace:*",
     "@ultimatehuman/plugin-datadog": "workspace:*",
     "@ultimatehuman/plugin-github": "workspace:*",
+    "@ultimatehuman/plugin-jira": "workspace:*",
     "@ultimatehuman/plugin-telegram": "workspace:*"
   }
 }

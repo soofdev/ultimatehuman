@@ -134,14 +134,14 @@ export interface SourceAdapter {
   expand?(ctx: PluginContext, signalId: string): Promise<unknown>;
 }
 
-/** Output plugins file issues. In v1 the only output is GitHub issues. */
+/** Output plugins file issues (GitHub Issues, Jira). */
 export interface OutputAdapter {
   /** Open issues the radar may be duplicating, for dedupe. */
-  listCandidates(ctx: PluginContext, query: { labels?: readonly string[]; since?: string }): Promise<ExistingIssue[]>;
+  listCandidates(ctx: OutputContext, query: { labels?: readonly string[]; since?: string }): Promise<ExistingIssue[]>;
   /** File one finding. Called only on an explicit human click or `autoFile: true`. */
-  file(ctx: PluginContext, finding: Finding): Promise<FiledIssue>;
+  file(ctx: OutputContext, finding: Finding): Promise<FiledIssue>;
   /** Add new evidence to an issue the radar already filed (recurrence). */
-  comment?(ctx: PluginContext, issueRef: string, body: string): Promise<void>;
+  comment?(ctx: OutputContext, issueRef: string, body: string): Promise<void>;
 }
 
 export interface ExistingIssue {
@@ -174,6 +174,17 @@ export interface SourcePlugin extends PluginBase {
 export interface OutputPlugin extends PluginBase {
   manifest: PluginManifest & { kind: "output" };
   output: OutputAdapter;
+  /**
+   * The hosts live filing may POST to, derived from the resolved credentials
+   * (e.g. the user's own Jira site). Without it the plugin gets no `send` and
+   * can only dry-run. Plain http is only ever allowed on loopback.
+   */
+  sendHosts?(credentials: Readonly<Record<string, string>>): readonly string[];
+}
+
+/** Context for output plugins: `send` exists only when live filing is on and `sendHosts` is declared. */
+export interface OutputContext extends PluginContext {
+  send?: OutboundHttp;
 }
 
 /**
