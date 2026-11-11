@@ -94,6 +94,20 @@ options: {
 Each condition takes one value or a list. The connection check confirms that every type named in
 `issueType` and `issueTypeRules` exists in the project, and lists the valid ones when not.
 
+## Look up tickets from chat
+
+With Jira configured and a token saved, ask the chat about tickets in plain language: "open MP
+tickets", "bugs assigned to me", "anything about Face ID", "what's the latest on MP-433". The chat
+writes the JQL and the engine runs it with its own saved key; the chat never sees the token.
+
+| Action | Returns |
+| --- | --- |
+| `search_tickets` | Up to 100 issues (default 25): key, title, status, type, priority, assignee, labels, dates, link. Default query: open issues in the configured project. |
+| `get_ticket` | One issue with its description and the latest 5 comments, as plain text |
+
+Lookups are read-only and work in dry run too. They cannot create, edit, assign or move issues.
+The ticket text they return is sent to your AI provider as part of the chat.
+
 ## Limits
 
 - **Jira Cloud only.** It uses REST API v3 and ADF; Jira Data Center/Server is not supported.

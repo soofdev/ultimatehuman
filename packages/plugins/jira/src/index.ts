@@ -1,5 +1,5 @@
-import { definePlugin, type ExistingIssue, type Finding, type OutputContext, type PluginContext } from "@ultimatehuman/sdk";
-import { findingDoc, plainDoc } from "./adf";
+import { definePlugin, type ExistingIssue, type Finding, type OutputContext, type PluginContext, type TrackerIssue, type TrackerIssueDetail, type TrackerSearchResult } from "@ultimatehuman/sdk";
+import { adfToText, findingDoc, plainDoc } from "./adf";
 
 /**
  * Output plugin: files an accepted finding as an issue in ONE Jira Cloud
@@ -115,6 +115,86 @@ const toExisting = (ctx: PluginContext, h: SearchHit): ExistingIssue => ({
   labels: h.fields.labels ?? [],
   updatedAt: h.fields.updated ?? "",
 });
+
+/* ── Read-only lookup (chat) ─────────────────────────────────────────── */
+
+const LOOKUP_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "reporter", "labels", "created", "updated"];
+const MAX_LOOKUP = 100;
+
+interface FullHit {
+  key: string;
+  fields: {
+    summary?: string;
+    status?: { name?: string; statusCategory?: { key?: string } };
+    issuetype?: { name?: string };
+    priority?: { name?: string };
+    assignee?: { displayName?: string } | null;
+    reporter?: { displayName?: string } | null;
+    labels?: string[];
+    created?: string;
+    updated?: string;
+    description?: unknown;
+    comment?: { total?: number; comments?: { author?: { displayName?: string }; created?: string; body?: unknown }[] };
+  };
+}
+
+/** Jira's status categories: new / indeterminate / done. */
+const category = (k: string | undefined) => (k === "new" ? "todo" : k === "indeterminate" ? "in_progress" : k ?? "unknown");
+
+const toTracker = (ctx: PluginContext, h: FullHit, withDescription: boolean): TrackerIssue => ({
+  ref: h.key,
+  title: h.fields.summary ?? h.key,
+  status: h.fields.status?.name ?? "unknown",
+  statusCategory: category(h.fields.status?.statusCategory?.key),
+  ...(h.fields.issuetype?.name ? { type: h.fields.issuetype.name } : {}),
+  ...(h.fields.priority?.name ? { priority: h.fields.priority.name } : {}),
+  assignee: h.fields.assignee?.displayName ?? "Unassigned",
+  ...(h.fields.reporter?.displayName ? { reporter: h.fields.reporter.displayName } : {}),
+  labels: h.fields.labels ?? [],
+  ...(h.fields.created ? { created: h.fields.created } : {}),
+  ...(h.fields.updated ? { updated: h.fields.updated } : {}),
+  url: browse(ctx, h.key),
+  ...(withDescription ? { description: h.fields.description ? adfToText(h.fields.description, 1500) : "" } : {}),
+});
+
+/** Issue keys look like MP-123. Anything else is refused before a request is made. */
+const ISSUE_KEY = /^[A-Za-z][A-Za-z0-9_]{0,19}-\d{1,9}$/;
+
+export async function lookupSearch(ctx: PluginContext, q: { query?: string; max?: number; includeDescription?: boolean }): Promise<TrackerSearchResult> {
+  if (!ctx.credentials.apiToken) throw new Error("No Jira API token is saved. Run `ultimatehuman key JIRA_API_TOKEN` in a terminal.");
+  const query = (q.query ?? "").trim() || `project = ${jqlString(projectKey(ctx))} AND statusCategory != Done ORDER BY updated DESC`;
+  if (query.length > 2000) throw new Error("The JQL query is too long (2000 characters at most).");
+  const max = Math.min(Math.max(1, Math.floor(Number(q.max) || 25)), MAX_LOOKUP);
+  const fields = q.includeDescription ? [...LOOKUP_FIELDS, "description"] : LOOKUP_FIELDS;
+  const issues: FullHit[] = [];
+  let nextPageToken: string | undefined;
+  let more = false;
+  do {
+    const r = await ctx.http.query(`${api(ctx)}/rest/api/3/search/jql`, { jql: query, maxResults: Math.min(50, max - issues.length), fields, ...(nextPageToken ? { nextPageToken } : {}) }, { headers: headers(ctx) });
+    if (r.status !== 200) throw await failure("search", r);
+    const page = await r.json<{ issues?: FullHit[]; nextPageToken?: string; isLast?: boolean }>();
+    issues.push(...(page.issues ?? []));
+    nextPageToken = page.isLast === false || (page.isLast === undefined && page.nextPageToken) ? page.nextPageToken : undefined;
+    more = !!nextPageToken;
+  } while (nextPageToken && issues.length < max);
+  return { query, issues: issues.slice(0, max).map((h) => toTracker(ctx, h, !!q.includeDescription)), more: more || issues.length > max };
+}
+
+export async function lookupGet(ctx: PluginContext, ref: string): Promise<TrackerIssueDetail> {
+  if (!ctx.credentials.apiToken) throw new Error("No Jira API token is saved. Run `ultimatehuman key JIRA_API_TOKEN` in a terminal.");
+  const key = String(ref ?? "").trim().toUpperCase();
+  if (!ISSUE_KEY.test(key)) throw new Error(`"${ref}" is not a Jira issue key (expected something like MP-123).`);
+  const r = await ctx.http.get(`${api(ctx)}/rest/api/3/issue/${encodeURIComponent(key)}?fields=${[...LOOKUP_FIELDS, "description", "comment"].join(",")}`, { headers: headers(ctx) });
+  if (r.status === 404) throw new Error(`${key} was not found, or this Jira account cannot see it.`);
+  if (r.status !== 200) throw await failure(`reading ${key}`, r);
+  const h = await r.json<FullHit>();
+  const all = h.fields.comment?.comments ?? [];
+  return {
+    ...toTracker(ctx, h, true),
+    commentCount: h.fields.comment?.total ?? all.length,
+    comments: all.slice(-5).map((c) => ({ ...(c.author?.displayName ? { author: c.author.displayName } : {}), ...(c.created ? { created: c.created } : {}), body: adfToText(c.body, 800) })),
+  };
+}
 
 export default definePlugin({
   manifest: {
@@ -261,6 +341,9 @@ export default definePlugin({
       ctx.log("info", `created ${created.key}`);
       return { ref: created.key, url: browse(ctx, created.key) };
     },
+
+    search: lookupSearch,
+    get: lookupGet,
 
     async comment(ctx: OutputContext, issueRef: string, body: string) {
       if (ctx.options.dryRun !== false) return;

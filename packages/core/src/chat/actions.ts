@@ -2,7 +2,8 @@ import type { IncomingMessage } from "node:http";
 import type { Config } from "../config/schema";
 import { configJsonSchema, SecretRef } from "../config/schema";
 import { resolveSecretRefs, type SecretRefValue } from "../config/load";
-import type { Plugin } from "@ultimatehuman/sdk";
+import type { OutputPlugin, Plugin } from "@ultimatehuman/sdk";
+import { readOnlyHttp } from "../plugins/http";
 import type { Route } from "../server/http";
 import type { PipelineRegistry } from "../pipelines/registry";
 import type { PipelineRuntime } from "../pipelines/runtime";
@@ -29,12 +30,31 @@ export function chatActions(d: {
     return response.json as any;
   };
   const status = () => call("GET /api/workspace");
+  /** The configured issue tracker that supports read-only lookup (Jira), with a read-only context. Credentials never leave the engine. */
+  const tracker = async () => {
+    const cfg = d.config();
+    const plugin = d.plugins.find((p): p is OutputPlugin => p.manifest.kind === "output" && !!cfg.plugins[p.manifest.id] && cfg.plugins[p.manifest.id]!.enabled !== false && !!(p as OutputPlugin).output.search);
+    if (!plugin) throw new Error("No issue tracker with lookup is configured. Jira is set up in plugins.jira (see docs/jira.md).");
+    loadEngineEnv();
+    const inst = cfg.plugins[plugin.manifest.id]!;
+    const credentials: Record<string, string> = {};
+    for (const [k, v] of Object.entries(inst.credentials ?? {})) credentials[k] = await resolveSecretRefs(v as SecretRefValue, d.configPath).catch(() => "");
+    const signal = AbortSignal.timeout(30_000);
+    const ctx = { credentials, options: inst.options ?? {}, http: readOnlyHttp(plugin.manifest.id, plugin.readOnlyPostAllowlist ?? [], () => {}, signal), log: () => {}, signal };
+    return { plugin, ctx };
+  };
   return {
     context: async () => ({
       workspace: await status(),
       templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, description: t.description, defaults: t.pipeline })),
       connectors: d.plugins.map((p) => ({ ...p.manifest, collectionAvailable: ["posthog", "datadog"].includes(p.manifest.id), guide: SOURCE_GUIDES[p.manifest.id as keyof typeof SOURCE_GUIDES] })),
       connectionRequests: d.connections.list(),
+      // Read-only ticket lookup (search_tickets / get_ticket): which tracker and project, never its credentials.
+      ticketTracker: (() => {
+        const cfg = d.config();
+        const p = d.plugins.find((x) => x.manifest.kind === "output" && !!cfg.plugins[x.manifest.id] && cfg.plugins[x.manifest.id]!.enabled !== false && !!(x as OutputPlugin).output.search);
+        return p ? { tracker: p.manifest.displayName, project: String(cfg.plugins[p.manifest.id]!.credentials?.projectKey ?? ""), lookup: true } : null;
+      })(),
       // Keys the user submitted whose access check failed: references and the diagnosis, never values.
       failedConnections: Object.fromEntries(["posthog", "datadog"].map((id) => [id, d.store.getKv(pendingKey(id))]).filter(([, v]) => v)),
       schema: configJsonSchema(),
@@ -73,6 +93,16 @@ export function chatActions(d: {
           if ((response.status ?? 200) >= 400 && !result?.projects) throw new Error(result?.error || "Operation refused.");
           if (result?.ok) d.connections.completeSource(source);
           return result;
+        }
+        case "search_tickets": {
+          const { plugin, ctx } = await tracker();
+          const result = await plugin.output.search!(ctx, { query: typeof a.jql === "string" ? a.jql : "", max: Number(a.max) || 25, includeDescription: a.includeDescription === true });
+          return { tracker: plugin.manifest.displayName, ...result, count: result.issues.length };
+        }
+        case "get_ticket": {
+          const { plugin, ctx } = await tracker();
+          if (!plugin.output.get) throw new Error(`${plugin.manifest.displayName} lookup cannot open single issues.`);
+          return { tracker: plugin.manifest.displayName, issue: await plugin.output.get(ctx, String(a.key ?? "")) };
         }
         case "run_pipeline": {
           const id = String(a.pipelineId ?? "");

@@ -142,6 +142,42 @@ export interface OutputAdapter {
   file(ctx: OutputContext, finding: Finding): Promise<FiledIssue>;
   /** Add new evidence to an issue the radar already filed (recurrence). */
   comment?(ctx: OutputContext, issueRef: string, body: string): Promise<void>;
+  /** Read-only lookup for chat: search the tracker (query syntax is the tracker's own, e.g. JQL). */
+  search?(ctx: PluginContext, q: { query?: string; max?: number; includeDescription?: boolean }): Promise<TrackerSearchResult>;
+  /** Read-only lookup for chat: one issue with its description and latest comments. */
+  get?(ctx: PluginContext, ref: string): Promise<TrackerIssueDetail>;
+}
+
+export interface TrackerIssue {
+  ref: string; // e.g. "MP-123"
+  title: string;
+  status: string;
+  /** Normalized: "todo" | "in_progress" | "done", or the tracker's own value. */
+  statusCategory: string;
+  type?: string;
+  priority?: string;
+  assignee?: string;
+  reporter?: string;
+  labels: readonly string[];
+  created?: string;
+  updated?: string;
+  url: string;
+  /** Plain text, truncated. Only when asked for (search) or always (get). */
+  description?: string;
+}
+
+export interface TrackerIssueDetail extends TrackerIssue {
+  /** The latest comments, oldest first, plain text, truncated. */
+  comments: readonly { author?: string; created?: string; body: string }[];
+  commentCount: number;
+}
+
+export interface TrackerSearchResult {
+  /** The query actually run. */
+  query: string;
+  issues: readonly TrackerIssue[];
+  /** True when more issues match than were returned. */
+  more: boolean;
 }
 
 export interface ExistingIssue {

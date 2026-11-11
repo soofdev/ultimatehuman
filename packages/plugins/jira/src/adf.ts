@@ -108,3 +108,30 @@ export function findingDoc(f: Finding): AdfDoc {
   c.push({ type: "rule" }, ...para(text("Fingerprint: "), text(f.dedupe.fingerprint, { type: "code" })));
   return { type: "doc", version: 1, content: c };
 }
+
+/** ADF (descriptions, comments) to plain text for chat: block nodes become lines, lists get bullets. */
+export function adfToText(node: unknown, max = 2000): string {
+  const out: string[] = [];
+  const walk = (n: any, prefix = ""): void => {
+    if (!n || typeof n !== "object") return;
+    if (n.type === "text") return void out.push(String(n.text ?? ""));
+    if (n.type === "hardBreak") return void out.push("\n");
+    if (n.type === "mention") return void out.push(String(n.attrs?.text ?? "@someone"));
+    if (n.type === "emoji") return void out.push(String(n.attrs?.text ?? n.attrs?.shortName ?? ""));
+    if (n.type === "inlineCard" || n.type === "blockCard") return void out.push(String(n.attrs?.url ?? ""));
+    if (n.type === "bulletList" || n.type === "orderedList") {
+      (n.content ?? []).forEach((item: any, i: number) => {
+        out.push(`\n${prefix}${n.type === "orderedList" ? `${i + 1}.` : "-"} `);
+        (item.content ?? []).forEach((c: any) => walk(c, `${prefix}  `));
+      });
+      return void out.push("\n");
+    }
+    const block = ["paragraph", "heading", "codeBlock", "blockquote", "rule", "panel", "table", "tableRow", "mediaSingle"].includes(n.type);
+    (n.content ?? []).forEach((c: any) => walk(c, prefix));
+    if (n.type === "tableCell" || n.type === "tableHeader") out.push(" | ");
+    if (block && n.type !== "blockquote") out.push("\n");
+  };
+  walk(node);
+  const text = out.join("").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+}
